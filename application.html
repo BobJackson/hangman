@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Tech-Strikingly Application</title>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.2/css/bootstrap.min.css" integrity="sha384-PsH8R72JQ3SOdhVi3uxftmaW6Vc51MKb0q5P2rRUpPvrszuE4W1povHYgTpBfshb" crossorigin="anonymous">
+    <link rel="shortcut icon" href="https://www.wufoo.com/assets/images/touch/favicon.ico" type="image/x-icon">
+    <style>
+        .bg-logo{
+            min-height: 40px;
+            height: 40px;
+            display: block;
+            background: url("https://simplystrikingly.wufoo.com/images/wflogo.png") no-repeat;
+            overflow: hidden;
+        }
+        #tabList li a{
+            color: #17a2b8;
+        }
+        .form-check-label:hover{
+            cursor: pointer;
+        }
+        .required::after{
+            color: red;
+            content: ' *';
+        }
+        input[type="checkbox"]{
+            margin-top: 7px;
+        }
+        @media (min-width: 576px) {
+            span.abbr{
+                display: inline-block;
+            }
+            span.full{
+                display: none;
+            }
+            .small-mt-4{
+                margin-top: 1.5rem!important;
+            }
+        }
+        @media (min-width: 768px) {
+            span.abbr{
+                display: none;
+            }
+            span.full{
+                display: inline-block;
+            }
+            .large-mt-auto{
+                margin-top: auto!important;
+            }
+        }
+    </style>
+</head>
+<body class="bg-info">
+<div class="container">
+    <div class="bg-light mt-3" id="topLogo">
+        <a class="bg-logo text-hide" href="http://www.wufoo.com/" title="Powered by Wufoo" data-toggle="tooltip" data-placement="left">Wufoo</a>
+    </div>
+    <div class="card p-3">
+        <h2>
+            Tech-Strikingly Application
+        </h2>
+        <p class="lead">
+            Thank you very much for your interest in Strikingly!
+        </p>
+    </div>
+    <form class=""  enctype="multipart/form-data" method="post"  action="https://simplystrikingly.wufoo.com/forms/q1wrdttw080thci/">
+        <div class="card  mt-2">
+            <div class="card-header">
+                <ul class="nav nav-tabs card-header-tabs" id="tabList">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="#info">Basic Info</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#exhibition">Portfolio Exhibition</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#perspective">Programming Perspective</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#questions">Interactive Questions</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#job">About This Job</a>
+                    </li>
+                </ul>
+            </div>
+            <div class="tab-content p-3" id="myTabContent">
+                <div class="tab-pane fade show active" id="info" role="tabpanel" aria-labelledby="home-tab">
+
+                    <div class="row">
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label for="name" class="required">Name</label>
+                                <input class="form-control" id="name" type="text" name="name"  placeholder="David Chen(陈海沙)"  required>
+                            </div>
+                        </div>
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label for="email" class="required">Email</label>
+                                <input class="form-control" id="email" type="email" name="email"  required>
+                            </div>
+                        </div>
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label for="cellphone" class="required">Cellphone</label>
+                                <input class="form-control" id="cellphone" type="tel" name="cellphone" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-4">
+                            <div class="form-group">
+                                <label for="skypeID">Skype ID</label>
+                                <input class="form-control" id="skypeID" type="text" name="skypeID">
+                            </div>
+                        </div>
+                        <div class="col-sm-8 col-md-4">
+                            <div class="form-group">
+                                <label for="location">Current location(city)</label>
+                                <input class="form-control" id="location" type="text" name="location">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+
+                        <div class="col-sm-4">
+
+                            <div class="form-check">
+                                <span class="required" id="positionSpan" data-toggle="tooltip" data-placement="right" title="Please check one position!">Which positions are you interested in?</span>
+                                <div class="col-sm-12">
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Backend Developer" name="positions">
+                                        Backend Developer
+                                    </label>
+                                </div>
+                                <div class="col-sm-12">
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Frontend Developer" name="positions">
+                                        Frontend Developer
+                                    </label>
+                                </div>
+                                <div class="col-sm-12">
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Frontend Architect" name="positions">
+                                        Frontend Architect
+                                    </label>
+                                </div>
+                                <div class="col-sm-12">
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Node.js Developer" name="positions">
+                                        Node.js Developer
+                                    </label>
+                                </div>
+
+                                <div class="col-sm-12">
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="iOS Developer" name="positions">
+                                        iOS Developer
+                                    </label>
+                                </div>
+                                <div class="col-sm-12">
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Android Developer" name="positions">
+                                        Android Developer
+                                    </label>
+                                </div>
+                                <div class="col-sm-12">
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="DevOps Developer" name="positions">
+                                        DevOps Developer
+                                    </label>
+                                </div>
+                                <div class="col-sm-12">
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Data Engineer" name="positions">
+                                        Data Engineer
+                                    </label>
+                                </div>
+
+
+                            </div>
+
+                        </div>
+
+                        <div class="col-sm-4">
+                            <div class="form-check">
+                                <span>Proficient Languages/Skills</span>
+                                <div class="row">
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="Ruby" name="proficients">
+                                            Ruby
+                                        </label>
+                                    </div>
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="JavaScript" name="proficients">
+                                            <span class="abbr">JS</span><span class="full">JavaScript</span>
+                                        </label>
+                                    </div>
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="Node.js" name="proficients">
+                                            Node.js
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="HTML" name="proficients">
+                                            HTML
+                                        </label>
+                                    </div>
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="jQuery" name="proficients">
+                                            jQuery
+                                        </label>
+                                    </div>
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="CSS" name="proficients">
+                                            CSS
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="Git" name="proficients">
+                                            Git
+                                        </label>
+                                    </div>
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="Linux" name="proficients">
+                                            Linux
+                                        </label>
+                                    </div>
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="C++" name="proficients">
+                                            C++
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="Django" name="proficients">
+                                            Django
+                                        </label>
+                                    </div>
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="AWS" name="proficients">
+                                            AWS
+                                        </label>
+                                    </div>
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="Python" name="proficients">
+                                            Python
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="Java" name="proficients">
+                                            Java
+                                        </label>
+                                    </div>
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="Rails" name="proficients">
+                                            Rails
+                                        </label>
+                                    </div>
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="Scala" name="proficients">
+                                            Scala
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="Java" name="Photoshop">
+                                            <span class="abbr">PS</span><span class="full">Photoshop</span>
+                                        </label>
+                                    </div>
+                                    <div class="col-sm-6 col-md-4">
+                                        <label class="form-check-label ">
+                                            <input class="form-check-input" type="checkbox" value="UI/UX" name="proficients">
+                                            UI/UX
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        <div class="col-sm-4">
+                            <label for="skills">List any other language/skill proficiencies here.</label>
+                            <textarea class="form-control mt-1" name="skills" id="skills" rows="6">
+                            </textarea>
+
+                        </div>
+
+
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-12 text-center">
+                            <button class="btn btn-lg btn-info" id="infoNextBtn">Next</button>
+                        </div>
+                    </div>
+
+                </div>
+
+                <div class="tab-pane fade" id="exhibition" role="tabpanel" aria-labelledby="profile-tab">
+                    <div class="row">
+                        <div class="col-sm-6">
+                            <div class="form-group">
+                                <label for="github">Github URL</label>
+                                <input class="form-control" id="github" type="url" name="github">
+                            </div>
+                        </div>
+                        <div class="col-sm-6">
+                            <div class="form-group">
+                                <label for="stackover">Stackoverflow account URL</label>
+                                <input class="form-control" id="stackover" type="url" name="stackover">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-6">
+                            <div class="form-group">
+                                <label for="portfolio" class="mt-4">Portfolio URLS</label>
+                                <textarea class="form-control" id="portfolio" name="portfolio" rows="3"></textarea>
+                            </div>
+                        </div>
+                        <div class="col-sm-6">
+                            <div class="form-group">
+                                <label for="work">What have you built(that's not listed left)? Show us your work! Anything that's live and public online? Any other open source code? Include URLs.</label>
+                                <textarea class="form-control" id="work" name="work" rows="3"></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-6">
+                            <div class="form-group">
+                                <label for="blog">Your own blog URL, if you have one</label>
+                                <input class="form-control" id="blog" type="url">
+                            </div>
+                        </div>
+                        <div class="col-sm-6">
+                            <div class="form-group">
+                                <label for="dribbble">Dribbble URL, if you have one</label>
+                                <input class="form-control" id="dribbble" type="url">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-12">
+                            <div class="form-group">
+                                <label for="techBlogs">What tech blogs do you follow?</label>
+                                <textarea class="form-control" id="techBlogs" name="techBlogs" rows="3"></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-12 text-center">
+                            <button class="btn btn-lg btn-outline-info mr-3 btn-flow" id="exhibitionBackBtn" data-position="1" data-operation="back">Back</button>
+                            <button class="btn btn-lg btn-info btn-next btn-flow" id="exhibitionNextBtn" data-position="1" data-operation="next">Next</button>
+                        </div>
+                    </div>
+
+                </div>
+
+                <div class="tab-pane fade" id="perspective" role="tabpanel" aria-labelledby="contact-tab">
+                    <div class="row">
+                        <div class="col-sm-6">
+                            <div class="form-check">
+                                <span id="programmingBook">Which of those programming books have you read?</span>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="The Pragmatic Programmer" name="programmingBook">
+                                        The Pragmatic Programmer
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Programming Pearls" name="programmingBook">
+                                        Programming Pearls
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="The Art of Unix Programming" name="programmingBook">
+                                        The Art of Unix Programming
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="The Structure and Interpretation of Computer Programs" name="programmingBook">
+                                        The Structure and Interpretation of Computer Programs
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-sm-6">
+                            <div class="form-check">
+                                <span id="algorithmBook">Which of these algorithm books have you read?</span>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Introduction to Algorithms" name="algorithmBook">
+                                        Introduction to Algorithms
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Algorithm Design" name="algorithmBook">
+                                        Algorithm Design
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="The Art of Unix Programming" name="algorithmBook">
+                                        The Art of Unix Programming
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="The Structure and Interpretation of Computer Programs" name="algorithmBook">
+                                        The Structure and Interpretation of Computer Programs
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row mt-4">
+                        <div class="col-sm-6">
+                            <div class="form-check">
+                                <span id="engineeringBook">Which of these Software development/engineering books have you read?</span>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Code Complete 2 " name="engineeringBook">
+                                        Code Complete 2
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Design Patterns by the Gang of Four " name="engineeringBook">
+                                        Design Patterns by the Gang of Four
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Test-Driven Development: By Example " name="engineeringBook">
+                                        Test-Driven Development: By Example
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Clean Code " name="engineeringBook">
+                                        Clean Code
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Domain Driven Designs " name="engineeringBook">
+                                        Domain Driven Designs
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Practices of an Agile Developer " name="engineeringBook">
+                                        Practices of an Agile Developer
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="The Mythical Man-Month " name="engineeringBook">
+                                        The Mythical Man-Month
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Agile Software Development Principles, Patterns, and Practices " name="engineeringBook">
+                                        Agile Software Development Principles, Patterns, and Practices
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-sm-6">
+                            <div class="form-check">
+                                <span id="hackerBook">Which of these hacker/startup culture books have you read?</span>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Hackers and Painters" name="hackerBook">
+                                        Hackers and Painters
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Rework" name="hackerBook">
+                                        Rework
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Getting Real" name="hackerBook">
+                                        Getting Real
+                                    </label>
+                                </div>
+                                <div>
+                                    <label class="form-check-label ">
+                                        <input class="form-check-input" type="checkbox" value="Don't Make Me Think" name="hackerBook">
+                                        Don't Make Me Think
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-12 text-center">
+                            <button class="btn btn-lg btn-outline-info mr-3 btn-flow" id="perspectiveBackBtn" data-position="2" data-operation="back">Back</button>
+                            <button class="btn btn-lg btn-info btn-flow" id="perspectiveNextBtn" data-position="2" data-operation="next">Next</button>
+                        </div>
+                    </div>
+
+                </div>
+
+                <div class="tab-pane fade" id="questions" role="tabpanel" aria-labelledby="contact-tab">
+                    <div class="row">
+                        <div class="col-sm-6">
+                            <div class="form-group">
+                                <label for="reason" class="required ">Why do you want to join Strikingly? What can you bring to Strikingly?</label>
+                                <textarea class="form-control" id="reason" name="reason" rows="5" required></textarea>
+                            </div>
+                        </div>
+                        <div class="col-sm-6">
+                            <div class="form-group small-mt-4 large-mt-auto">
+                                <label class="required" for="advantage">Tell us 3 reasons that we must interview you.</label>
+                                <textarea class="form-control" id="advantage" name="work" rows="5" required></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-6">
+                            <div class="form-group">
+                                <label for="doubt" class="required ">Ask us 5 questions about Strikingly.</label>
+                                <textarea class="form-control" id="doubt" name="reason" rows="5" required></textarea>
+                            </div>
+                        </div>
+                        <div class="col-sm-6">
+                            <div class="form-group small-mt-4 large-mt-auto">
+                                <label class="required" for="fun">What do you do for fun? </label>
+                                <textarea class="form-control" id="fun" name="work" rows="5" required></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-12 text-center">
+                            <button class="btn btn-lg btn-outline-info mr-3 btn-flow" id="questionsBackBtn" data-position="3" data-operation="back">Back</button>
+                            <button class="btn btn-lg btn-info btn-flow" id="questionsNextBtn" data-position="3" data-operation="next">Next</button>
+                        </div>
+                    </div>
+
+                </div>
+
+                <div class="tab-pane fade" id="job" role="tabpanel" aria-labelledby="contact-tab">
+                    <div class="row">
+                        <div class="col-sm-12 col-md-3">
+                            <div class="form-group">
+                                <label class="required" for="when">If we offer you the position in Shanghai, when can you start?</label>
+                                <input class="form-control" id="when" type="text" name="when">
+                            </div>
+                        </div>
+                        <div class="col-sm-12 col-md-3">
+                            <div class="form-group mt-4">
+                                <label class="required" for="currentSalary">Current Salary </label>
+                                <input class="form-control" id="currentSalary" type="text" name="currentSalary">
+                            </div>
+                        </div>
+                        <div class="col-sm-12 col-md-3">
+                            <div class="form-group mt-4">
+                                <label  for="expectSalary">Salary Expectation</label>
+                                <input class="form-control" id="expectSalary" type="text" name="expectSalary">
+                            </div>
+                        </div>
+                        <div class="col-sm-12 col-md-3">
+                            <div class="form-group mt-4">
+                                <label class="required"  for="where">Where did you hear about us？</label>
+                                <input class="form-control" id="where" type="text" name="where" aria-describedby="channelHelp">
+                                <small id="channelHelp" class="form-text text-muted">Such as:v2ex, Lagou, Boss直聘,Hacker News, Headhunter</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-12">
+                            <div class="form-group">
+                                <label class="required" for="samples">Would you please send us two code samples that you think can best represent your current skill levels?</label>
+                                <input class="form-control" id="samples" type="file" name="samples">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-12">
+                            <div class="form-group">
+                                <label for="cv">Please upload your cv to us if you haven't sent to jobs@strikingly.com before.</label>
+                                <input class="form-control" id="cv" type="file" name="cv">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-sm-12 text-center">
+                            <button class="btn btn-lg btn-outline-info mr-3 btn-flow" id="jobBackBtn" data-position="4" data-operation="back">Back</button>
+                            <button class="btn btn-lg btn-info" id="jobNextBtn" type="button" data-toggle="modal" data-target="#confirmModal">Submit</button>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </form>
+
+</div>
+
+<div class="modal fade" id="confirmModal" tabindex="-1" role="dialog" aria-labelledby="confirmModalLabel" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="exampleModalLabel">Submit Confirm</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                    <span aria-hidden="true">&times;</span>
+                </button>
+            </div>
+            <div class="modal-body">
+                Are you sure to submit right now?
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">No</button>
+                <button type="button" class="btn btn-info" id="submitBtn">Yes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<script src="https://code.jquery.com/jquery-3.2.1.slim.min.js" integrity="sha384-KJ3o2DKtIkvYIK3UENzmM7KCkRr/rE9/Qpg6aAZGJwFDMVNA/GpGFF93hXpG5KkN" crossorigin="anonymous"></script>
+<!--popper.min.js maybe loads failed-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.3/umd/popper.min.js" integrity="sha384-vFJXuSJphROIrBnz7yo7oB41mKfc8JzQZiCq4NCceLEaO4IHwicKwpJf9c9IpFgh" crossorigin="anonymous"></script>
+
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-beta.2/js/bootstrap.min.js" integrity="sha384-alpBpkh1PFOepccYVYDB4do5UnbKysX5WZXm3XxPqe5iKTfUKjNkCk9SaVuEZflJ" crossorigin="anonymous"></script>
+<script>
+    $(function () {
+        // tooltip
+        $('[data-toggle="tooltip"]').tooltip();
+
+        // refactor to reduce duplicated code
+        function hideTooltip() {
+            $('#positionSpan').tooltip('hide');
+        }
+
+        // tab
+        $('#tabList').find('a').on('click', function (e) {
+            e.preventDefault()
+            $(this).tab('show');
+            // avoid tooltip always show
+            hideTooltip();
+        })
+
+        // infoNextBtn click handler
+        $('#infoNextBtn').on('click',function (e) {
+            e.preventDefault();
+            // check for notnull field
+            var focusNum = 0;
+            $('input[required]').each(function (i) {
+                if($(this).val() == ""){
+                    focusNum++;
+                    $(this).focus();
+                    return false;
+                }
+            });
+            // check for positions
+            if($('input[name="positions"]:checked').length <= 0) {
+                $('#positionSpan').tooltip('show');
+                return;
+            }
+            if(focusNum) return;
+            $('#tabList').find('li:eq(1) a').tab('show');
+        });
+
+        // avoid tooltip always show
+        $('input[name="positions"]').on('click',function () {
+            hideTooltip();
+        });
+
+        // refactor 40 lines code，change dom feature(.btn-flow,position and action[back/forward]) to make method called universally
+        $('.btn-flow').on('click',function(e){
+            e.preventDefault();
+            var index = $(this).data('position');
+            var operation = $(this).data('operation');
+            "back" == operation ? index-- : index++;
+            $('#tabList li:eq('+(index)+') a').tab('show');
+        });
+
+        // jobNextBtn click handler
+        $('#submitBtn').on('click',function(e){
+            e.preventDefault();
+            // maybe do some check before submit
+            $('form').submit();
+        });
+
+
+    })
+</script>
+</body>
+</html>
