@@ -32,9 +32,11 @@ public final class BenchmarkReport {
      * @param wrongGuesses    misses charged against this word
      * @param guessesUsed     letters spent on this word, hit or miss
      * @param finalCandidates dictionary words still consistent when the word ended
+     * @param abandoned       true when the solver gave up rather than running out of misses
      */
     public record WordOutcome(int wordIndex, int length, boolean solved,
-                              int wrongGuesses, int guessesUsed, int finalCandidates) {
+                              int wrongGuesses, int guessesUsed, int finalCandidates,
+                              boolean abandoned) {
 
         public WordOutcome {
             if (wordIndex <= 0) {
@@ -50,6 +52,9 @@ public final class BenchmarkReport {
                 throw new IllegalArgumentException(
                         "guessesUsed " + guessesUsed + " is less than wrongGuesses " + wrongGuesses);
             }
+            if (abandoned && solved) {
+                throw new IllegalArgumentException("a solved word cannot have been abandoned");
+            }
         }
 
         /**
@@ -64,7 +69,7 @@ public final class BenchmarkReport {
 
     /** Aggregate behaviour on one difficulty tier. */
     public record TierStats(String label, int words, int solved, int wrongGuesses,
-                            int guessesUsed, int notInDictionary) {
+                            int guessesUsed, int notInDictionary, int abandoned) {
 
         /** Fraction of words on this tier that were fully revealed, in [0,1]. */
         public double solveRate() {
@@ -85,10 +90,16 @@ public final class BenchmarkReport {
         public double notInDictionaryRate() {
             return words == 0 ? 0.0 : (double) notInDictionary / words;
         }
+
+        /** Fraction of words given up on before the misses ran out, in [0,1]. */
+        public double abandonedRate() {
+            return words == 0 ? 0.0 : (double) abandoned / words;
+        }
     }
 
     private final String label;
     private final SimulationConfig config;
+    private final int attempts;
     private final List<GameResult> games;
     private final List<WordOutcome> words;
     private final List<TierStats> tiers;
@@ -105,19 +116,30 @@ public final class BenchmarkReport {
     private final int minScore;
     private final int maxScore;
 
-    /**
-     * @param label variant name, e.g. {@code "coverage"}
-     * @param config the configuration the sessions were run under
-     * @param games  one result per session; must not be empty
-     * @param words  one outcome per attempted word, across all sessions
-     */
+    /** A report of a single attempt per session. */
     public BenchmarkReport(String label, SimulationConfig config,
+                           List<GameResult> games, List<WordOutcome> words) {
+        this(label, config, 1, games, words);
+    }
+
+    /**
+     * @param label    variant name, e.g. {@code "coverage"}
+     * @param config   the configuration the sessions were run under
+     * @param attempts how many independent sessions were played per reported game
+     * @param games    one result per game — the attempt that scored highest; must not be empty
+     * @param words    one outcome per attempted word, for the attempts that were kept
+     */
+    public BenchmarkReport(String label, SimulationConfig config, int attempts,
                            List<GameResult> games, List<WordOutcome> words) {
         if (games.isEmpty()) {
             throw new IllegalArgumentException("a report needs at least one session");
         }
+        if (attempts < 1) {
+            throw new IllegalArgumentException("attempts must be at least 1: " + attempts);
+        }
         this.label = label;
         this.config = config;
+        this.attempts = attempts;
         this.games = List.copyOf(games);
         this.words = List.copyOf(words);
 
@@ -175,6 +197,11 @@ public final class BenchmarkReport {
 
     public SimulationConfig config() {
         return config;
+    }
+
+    /** How many independent sessions were played per reported game; 1 for a plain run. */
+    public int attempts() {
+        return attempts;
     }
 
     public List<GameResult> games() {
@@ -266,12 +293,13 @@ public final class BenchmarkReport {
         out.append(String.format(Locale.ROOT,
                 "score    mean %.2f   median %.2f   sd %.2f   min %d   max %d%n",
                 meanScore, medianScore, sampleStdDevScore, minScore, maxScore));
-        out.append(String.format(Locale.ROOT, "%-14s %6s %7s %7s %11s %8s %6s%n",
-                "tier", "words", "solved", "rate", "wrong/word", "guesses", "blind"));
+        out.append(String.format(Locale.ROOT, "%-14s %6s %7s %7s %11s %8s %7s %6s%n",
+                "tier", "words", "solved", "rate", "wrong/word", "guesses", "skipped", "blind"));
         for (TierStats tier : tiers) {
-            out.append(String.format(Locale.ROOT, "%-14s %6d %7d %6.1f%% %11.2f %8.2f %5.1f%%%n",
+            out.append(String.format(Locale.ROOT, "%-14s %6d %7d %6.1f%% %11.2f %8.2f %6.1f%% %5.1f%%%n",
                     tier.label(), tier.words(), tier.solved(), 100.0 * tier.solveRate(),
-                    tier.wrongPerWord(), tier.guessesPerWord(), 100.0 * tier.notInDictionaryRate()));
+                    tier.wrongPerWord(), tier.guessesPerWord(), 100.0 * tier.abandonedRate(),
+                    100.0 * tier.notInDictionaryRate()));
         }
         out.append("blind = words whose answer was not in the dictionary; 0 means the pool was built correctly")
                 .append(System.lineSeparator());
@@ -292,6 +320,9 @@ public final class BenchmarkReport {
         if (config.failureRate() > 0.0) {
             out.append(String.format(Locale.ROOT, ", injected faults %.2f", config.failureRate()));
         }
+        if (attempts > 1) {
+            out.append(", best of ").append(attempts);
+        }
         out.append(", seed ").append(config.seed());
         return out.toString();
     }
@@ -303,6 +334,7 @@ public final class BenchmarkReport {
         int[] wrong = new int[tierCount];
         int[] guesses = new int[tierCount];
         int[] blind = new int[tierCount];
+        int[] abandoned = new int[tierCount];
 
         for (WordOutcome word : words) {
             int tier = config.tierOf(word.wordIndex());
@@ -315,12 +347,15 @@ public final class BenchmarkReport {
             if (word.notInDictionary()) {
                 blind[tier]++;
             }
+            if (word.abandoned()) {
+                abandoned[tier]++;
+            }
         }
 
         List<TierStats> stats = new ArrayList<>(tierCount);
         for (int tier = 0; tier < tierCount; tier++) {
             stats.add(new TierStats(config.tierLabel(tier), counts[tier], solved[tier],
-                    wrong[tier], guesses[tier], blind[tier]));
+                    wrong[tier], guesses[tier], blind[tier], abandoned[tier]));
         }
         return List.copyOf(stats);
     }

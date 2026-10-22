@@ -37,4 +37,18 @@ public interface Solver {
      * measure of dictionary quality.
      */
     int candidateCount();
+
+    /**
+     * True when the solver would rather give the word up than spend another miss on it.
+     *
+     * <p>Abandoning is only free because the score charges misses already spent, not misses
+     * that were never spent: {@code 20 * correct - wrong} does not care how a word ended, only
+     * that it did not end with a reveal. Whether the server permits it is a separate question —
+     * see the skip measurement in the README, which reports both answers.
+     *
+     * <p>Asked once per turn, before {@link #nextGuess()}. The default is never to abandon.
+     */
+    default boolean shouldAbandon() {
+        return false;
+    }
 }

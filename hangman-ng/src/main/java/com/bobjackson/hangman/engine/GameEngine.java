@@ -20,6 +20,10 @@ import java.util.Objects;
  *
  * <p>A fresh {@link Solver} is created per word. The solver owns the per-word state; the
  * engine owns none, which is why it is trivial to run eighty words or eighty games.
+ *
+ * <p>The loop asks the solver once per turn whether the word is worth continuing. That is
+ * the only place abandoning can happen: the engine never decides it, and a solver that never
+ * wants to is unaffected.
  */
 public final class GameEngine {
 
@@ -54,8 +58,13 @@ public final class GameEngine {
 
             Solver solver = solverFactory.create(state, allowedForEachWord);
             int guessesUsed = 0;
+            boolean abandoned = false;
 
             while (!state.solved() && state.wrongGuessCountOfCurrentWord() < allowedForEachWord) {
+                if (solver.shouldAbandon()) {
+                    abandoned = true;
+                    break;
+                }
                 char guess = solver.nextGuess();
                 state = client.guess(guess);
                 solver.observe(guess, state);
@@ -63,7 +72,7 @@ public final class GameEngine {
                 listener.onGuess(state, guess, solver.candidateCount());
             }
 
-            listener.onWordFinished(state, solver.candidateCount(), guessesUsed);
+            listener.onWordFinished(state, solver.candidateCount(), guessesUsed, abandoned);
 
             if (state.totalWordCount() >= game.numberOfWordsToGuess()) {
                 break;

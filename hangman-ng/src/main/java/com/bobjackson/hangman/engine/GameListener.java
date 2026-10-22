@@ -38,8 +38,9 @@ public interface GameListener {
      * @param state          the final state for this word
      * @param candidateCount candidates left when it ended; 0 means the answer was not in our dictionary
      * @param guessesUsed    letters spent on this word
+     * @param abandoned      true when the solver gave up rather than running out of misses
      */
-    default void onWordFinished(WordState state, int candidateCount, int guessesUsed) {
+    default void onWordFinished(WordState state, int candidateCount, int guessesUsed, boolean abandoned) {
     }
 
     /** The session was submitted. */

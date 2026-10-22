@@ -8,6 +8,7 @@ import com.bobjackson.hangman.engine.GameEngine;
 import com.bobjackson.hangman.engine.GameListener;
 import com.bobjackson.hangman.solver.EliminationSolver;
 import com.bobjackson.hangman.solver.LetterSelector;
+import com.bobjackson.hangman.solver.SkipPolicy;
 import com.bobjackson.hangman.solver.SolverFactory;
 import com.bobjackson.hangman.api.WordState;
 import com.bobjackson.hangman.transport.RetryingHangmanClient;
@@ -19,6 +20,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadFactory;
 import java.util.function.Function;
 
 /**
@@ -36,6 +42,16 @@ import java.util.function.Function;
  * Each session gets its own seed, derived as {@code seed + i * 1_000_003}. Session 7 is
  * therefore identical whether the run had eight sessions or eight thousand, which makes a
  * single bad session reproducible on its own instead of "run it again and hope".
+ *
+ * <h2>Best of N</h2>
+ * {@link #runBestOf} plays every game {@code attempts} times and keeps the highest score of
+ * each group, modelling a server that keeps the best score submitted rather than the last
+ * one. The extra attempts are played concurrently because they share nothing: each owns its
+ * own {@link SimulatedServer}, {@link GameEngine} and {@link Recorder}, while the dictionary,
+ * the ranking and the answer pool are read-only. Seeds are laid out so that the first
+ * attempt of a group keeps the seed it would have had in a plain run
+ * ({@code seed + (game + attempt * games) * stride}), which makes best-of-N strictly dominate
+ * best-of-1 game by game and keeps every session reproducible by itself.
  *
  * <p>The dictionary, the ranking and the pool are built once and shared by every session
  * and every variant. That is the point of the whole exercise: the legacy client rebuilt a
@@ -71,9 +87,15 @@ public final class EvaluationHarness {
 
         /** A variant that varies only which letter it asks for next. */
         public static Variant selectingLetters(String name, LetterSelector selector) {
+            return selectingLetters(name, selector, SkipPolicy.NEVER);
+        }
+
+        /** A variant that varies the letters asked for and when a word is given up. */
+        public static Variant selectingLetters(String name, LetterSelector selector, SkipPolicy skipPolicy) {
             Objects.requireNonNull(selector, "selector");
+            Objects.requireNonNull(skipPolicy, "skipPolicy");
             return new Variant(name, dictionary -> (firstState, wrongGuessesAllowed) ->
-                    EliminationSolver.forWord(dictionary, selector, firstState, wrongGuessesAllowed));
+                    EliminationSolver.forWord(dictionary, selector, firstState, wrongGuessesAllowed, skipPolicy));
         }
 
         /** Binds this strategy to a dictionary, producing fresh solvers per word. */
@@ -130,24 +152,110 @@ public final class EvaluationHarness {
 
     /** Runs one variant over every configured session and returns the aggregate. */
     public BenchmarkReport run(Variant variant) {
+        return runBestOf(variant, 1);
+    }
+
+    /**
+     * Plays each of the configured games {@code attempts} times and keeps the best score.
+     *
+     * <p>The attempts of one game are independent sessions, so they run concurrently; a
+     * best-of-eight measurement therefore costs roughly one measurement's wall clock instead
+     * of eight. {@code attempts == 1} runs on the calling thread and reproduces {@link #run}
+     * exactly.
+     *
+     * <p>Only the winning attempt's word outcomes are reported. Mixing in the losers would
+     * make the score line describe best-of-N while the solve rate and miss counts described
+     * the average attempt, and the two would no longer be about the same sessions. The price
+     * of that choice is that the per-tier columns describe a lucky session and read
+     * optimistically; the score line is the unbiased number.
+     *
+     * @param attempts how many sessions to play per game; at least 1
+     */
+    public BenchmarkReport runBestOf(Variant variant, int attempts) {
         Objects.requireNonNull(variant, "variant");
+        if (attempts < 1) {
+            throw new IllegalArgumentException("attempts must be at least 1: " + attempts);
+        }
         SolverFactory factory = variant.toFactory(dictionary);
 
         List<GameResult> results = new ArrayList<>(config.games());
         List<BenchmarkReport.WordOutcome> outcomes =
                 new ArrayList<>(config.games() * config.wordsPerGame());
 
-        for (int session = 0; session < config.games(); session++) {
-            SimulationConfig sessionConfig = config.withSeed(config.seed() + session * GAME_SEED_STRIDE);
-            Recorder recorder = new Recorder();
-            try (HangmanClient client = clientFor(sessionConfig)) {
-                GameEngine engine = new GameEngine(client, factory, recorder);
-                results.add(engine.play("bobjackson-" + (session + 1)));
+        ExecutorService pool = attempts == 1 ? null : newPool(attempts);
+        try {
+            for (int game = 0; game < config.games(); game++) {
+                Attempt kept = pool == null
+                        ? playAttempt(game, 0, factory, "bobjackson-" + (game + 1))
+                        : bestOf(game, attempts, factory, pool);
+                results.add(kept.result());
+                outcomes.addAll(kept.outcomes());
             }
-            outcomes.addAll(recorder.outcomes);
+        } finally {
+            if (pool != null) {
+                pool.shutdownNow();
+            }
         }
 
-        return new BenchmarkReport(variant.name(), config, results, outcomes);
+        return new BenchmarkReport(variant.name(), config, attempts, results, outcomes);
+    }
+
+    /** Plays one game's attempts concurrently and keeps the highest-scoring one. */
+    private Attempt bestOf(int game, int attempts, SolverFactory factory, ExecutorService pool) {
+        List<Future<Attempt>> pending = new ArrayList<>(attempts);
+        for (int attempt = 0; attempt < attempts; attempt++) {
+            // Captured by the task below, so it has to be final.
+            final int nth = attempt;
+            String playerId = "bobjackson-" + (game + 1) + '-' + (nth + 1);
+            pending.add(pool.submit(() -> playAttempt(game, nth, factory, playerId)));
+        }
+
+        Attempt best = null;
+        for (Future<Attempt> future : pending) {
+            Attempt candidate = await(future);
+            // Ties keep the earlier attempt, so the winner is deterministic when two attempts
+            // happen to score the same.
+            if (best == null || candidate.result().score() > best.result().score()) {
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
+    private Attempt playAttempt(int game, int attempt, SolverFactory factory, String playerId) {
+        SimulationConfig sessionConfig = config.withSeed(
+                config.seed() + (game + (long) attempt * config.games()) * GAME_SEED_STRIDE);
+        Recorder recorder = new Recorder();
+        GameResult result;
+        try (HangmanClient client = clientFor(sessionConfig)) {
+            result = new GameEngine(client, factory, recorder).play(playerId);
+        }
+        return new Attempt(result, List.copyOf(recorder.outcomes));
+    }
+
+    private static Attempt await(Future<Attempt> future) {
+        try {
+            return future.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while waiting for a session", e);
+        } catch (ExecutionException e) {
+            // Rethrow what the session actually threw; wrapping it in a report would hide the
+            // one diagnostic that matters.
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            if (cause instanceof Error error) {
+                throw error;
+            }
+            throw new IllegalStateException(cause);
+        }
+    }
+
+    private static ExecutorService newPool(int threads) {
+        ThreadFactory factory = Thread.ofPlatform().name("hangman-session-", 0).daemon(true).factory();
+        return Executors.newFixedThreadPool(threads, factory);
     }
 
     /**
@@ -207,20 +315,25 @@ public final class EvaluationHarness {
         return List.copyOf(kept);
     }
 
+    /** One played session and what it produced; the unit that best-of-N compares. */
+    private record Attempt(GameResult result, List<BenchmarkReport.WordOutcome> outcomes) {
+    }
+
     /** Captures one outcome per finished word; the engine calls this exactly once per word. */
     private static final class Recorder implements GameListener {
 
         private final List<BenchmarkReport.WordOutcome> outcomes = new ArrayList<>();
 
         @Override
-        public void onWordFinished(WordState state, int candidateCount, int guessesUsed) {
+        public void onWordFinished(WordState state, int candidateCount, int guessesUsed, boolean abandoned) {
             outcomes.add(new BenchmarkReport.WordOutcome(
                     state.totalWordCount(),
                     state.length(),
                     state.solved(),
                     state.wrongGuessCountOfCurrentWord(),
                     guessesUsed,
-                    candidateCount));
+                    candidateCount,
+                    abandoned));
         }
     }
 }

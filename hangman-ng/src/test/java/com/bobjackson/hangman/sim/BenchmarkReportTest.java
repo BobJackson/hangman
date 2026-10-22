@@ -20,14 +20,14 @@ class BenchmarkReportTest {
             new GameResult(4, 4, 5, GameResult.scoreOf(4, 5)));
 
     private final List<BenchmarkReport.WordOutcome> words = List.of(
-            new BenchmarkReport.WordOutcome(1, 5, true, 0, 5, 1),
-            new BenchmarkReport.WordOutcome(2, 8, true, 0, 7, 1),
-            new BenchmarkReport.WordOutcome(3, 9, true, 0, 8, 1),
-            new BenchmarkReport.WordOutcome(4, 13, false, 10, 10, 0),
-            new BenchmarkReport.WordOutcome(1, 5, true, 0, 4, 1),
-            new BenchmarkReport.WordOutcome(2, 8, true, 0, 5, 1),
-            new BenchmarkReport.WordOutcome(3, 9, true, 0, 6, 1),
-            new BenchmarkReport.WordOutcome(4, 13, true, 0, 9, 1));
+            new BenchmarkReport.WordOutcome(1, 5, true, 0, 5, 1, false),
+            new BenchmarkReport.WordOutcome(2, 8, true, 0, 7, 1, false),
+            new BenchmarkReport.WordOutcome(3, 9, true, 0, 8, 1, false),
+            new BenchmarkReport.WordOutcome(4, 13, false, 10, 10, 0, false),
+            new BenchmarkReport.WordOutcome(1, 5, true, 0, 4, 1, false),
+            new BenchmarkReport.WordOutcome(2, 8, true, 0, 5, 1, false),
+            new BenchmarkReport.WordOutcome(3, 9, true, 0, 6, 1, false),
+            new BenchmarkReport.WordOutcome(4, 13, true, 0, 9, 1, false));
 
     @Test
     void summarisesTheScoreDistribution() {
@@ -97,10 +97,31 @@ class BenchmarkReportTest {
 
     @Test
     void rejectsAnImpossibleWordOutcome() {
-        assertThatThrownBy(() -> new BenchmarkReport.WordOutcome(0, 5, true, 0, 5, 1))
+        assertThatThrownBy(() -> new BenchmarkReport.WordOutcome(0, 5, true, 0, 5, 1, false))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new BenchmarkReport.WordOutcome(1, 5, false, 5, 2, 1))
+        assertThatThrownBy(() -> new BenchmarkReport.WordOutcome(1, 5, false, 5, 2, 1, false))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("less than wrongGuesses");
+        assertThatThrownBy(() -> new BenchmarkReport.WordOutcome(1, 5, true, 0, 5, 1, true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("abandoned");
+    }
+
+    @Test
+    void countsAbandonedWordsSeparatelyFromExhaustedOnes() {
+        List<BenchmarkReport.WordOutcome> mixed = List.of(
+                new BenchmarkReport.WordOutcome(1, 5, true, 0, 5, 1, false),
+                new BenchmarkReport.WordOutcome(2, 8, false, 10, 10, 1, false),
+                new BenchmarkReport.WordOutcome(3, 9, false, 3, 6, 1, true),
+                new BenchmarkReport.WordOutcome(4, 13, false, 4, 7, 1, true));
+
+        BenchmarkReport report = new BenchmarkReport("hopeless", CONFIG, games, mixed);
+
+        assertThat(report.tiers().get(0).abandonedRate()).isZero();
+        assertThat(report.tiers().get(3).abandonedRate()).isEqualTo(1.0);
+        assertThat(report.toTable()).contains("skipped");
+        // Abandoning saves misses but not the word: the report must not confuse the two.
+        assertThat(report.totalCorrect()).isEqualTo(1);
+        assertThat(report.totalWrong()).isEqualTo(17);
     }
 }

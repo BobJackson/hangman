@@ -36,11 +36,17 @@ import java.util.Objects;
  * allocation when something is actually eliminated. The legacy equivalent removed elements
  * from a {@code CopyOnWriteArrayList} inside a loop, copying the whole backing array per
  * removal — O(n²) over a 416k-word list, which is the main reason a full game took 86 minutes.
+ *
+ * <h2>Giving up</h2>
+ * The solver can also answer "is this word worth another miss?" through a {@link SkipPolicy}.
+ * That is a separate axis from letter choice — a policy that never fires leaves the guess
+ * sequence bit-for-bit identical — which is what makes its effect measurable on its own.
  */
 public final class EliminationSolver implements Solver {
 
     private final Dictionary dictionary;
     private final LetterSelector selector;
+    private final SkipPolicy skipPolicy;
     private final int wrongGuessesAllowed;
     private final char[] pattern;
 
@@ -56,8 +62,21 @@ public final class EliminationSolver implements Solver {
      */
     public EliminationSolver(Dictionary dictionary, LetterSelector selector,
                              int wordLength, int wrongGuessesAllowed) {
+        this(dictionary, selector, wordLength, wrongGuessesAllowed, SkipPolicy.NEVER);
+    }
+
+    /**
+     * @param dictionary          immutable word list; only its length bucket is used
+     * @param selector            letter-picking strategy
+     * @param wordLength          number of letters in the answer
+     * @param wrongGuessesAllowed misses permitted before the word is abandoned
+     * @param skipPolicy          when to give the word up instead of guessing again
+     */
+    public EliminationSolver(Dictionary dictionary, LetterSelector selector, int wordLength,
+                             int wrongGuessesAllowed, SkipPolicy skipPolicy) {
         this.dictionary = Objects.requireNonNull(dictionary, "dictionary");
         this.selector = Objects.requireNonNull(selector, "selector");
+        this.skipPolicy = Objects.requireNonNull(skipPolicy, "skipPolicy");
         if (wordLength <= 0) {
             throw new IllegalArgumentException("wordLength must be positive: " + wordLength);
         }
@@ -73,7 +92,23 @@ public final class EliminationSolver implements Solver {
     /** Starts a solver for the word described by {@code firstState}. */
     public static EliminationSolver forWord(Dictionary dictionary, LetterSelector selector,
                                             WordState firstState, int wrongGuessesAllowed) {
-        return new EliminationSolver(dictionary, selector, firstState.length(), wrongGuessesAllowed);
+        return forWord(dictionary, selector, firstState, wrongGuessesAllowed, SkipPolicy.NEVER);
+    }
+
+    /** Starts a solver that may give up, for the word described by {@code firstState}. */
+    public static EliminationSolver forWord(Dictionary dictionary, LetterSelector selector,
+                                            WordState firstState, int wrongGuessesAllowed,
+                                            SkipPolicy skipPolicy) {
+        return new EliminationSolver(dictionary, selector, firstState.length(), wrongGuessesAllowed, skipPolicy);
+    }
+
+    @Override
+    public boolean shouldAbandon() {
+        if (skipPolicy == SkipPolicy.NEVER) {
+            return false;
+        }
+        return skipPolicy.shouldSkip(
+                new SkipContext(dictionary, candidates, new String(pattern), guessedMask, wrongGuessesLeft()));
     }
 
     @Override

@@ -39,9 +39,9 @@
 
     <dependencies>
         <!--
-          Deliberately no runtime dependencies in M1: the offline simulator needs no HTTP
-          stack and no JSON library. Jackson / java.net.http usage arrives with the real
-          transport layer (M4).
+          Deliberately no runtime dependencies, M4 included: the HTTP transport uses
+          java.net.http from the JDK, and the protocol's JSON is handled by a package-private
+          parser in transport/. That keeps `mvn -o` working and the jar self-contained.
         -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>

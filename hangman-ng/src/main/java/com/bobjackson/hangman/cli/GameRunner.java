@@ -10,6 +10,8 @@ import com.bobjackson.hangman.sim.BenchmarkReport;
 import com.bobjackson.hangman.sim.EvaluationHarness;
 import com.bobjackson.hangman.sim.SimulationConfig;
 import com.bobjackson.hangman.solver.FrequencyLetterSelector;
+import com.bobjackson.hangman.solver.InformationGainLetterSelector;
+import com.bobjackson.hangman.solver.SkipPolicy;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -82,13 +84,18 @@ public final class GameRunner {
         if (options.config().failureRate() > 0.0) {
             System.out.println("note: injected faults are retried without backoff so the run stays quick");
         }
+        if (options.bestOf() > 1) {
+            System.out.println("note: best of " + options.bestOf()
+                    + ": every game is played that many times and only its highest score is kept;"
+                    + " this assumes the server scores the best submission, which the instructions do not say");
+        }
         System.out.println();
 
         List<BenchmarkReport> reports = new ArrayList<>();
         for (String name : options.variants()) {
             EvaluationHarness.Variant variant = variant(name);
             long started = System.nanoTime();
-            BenchmarkReport report = harness.run(variant);
+            BenchmarkReport report = harness.runBestOf(variant, options.bestOf());
             long elapsedMillis = (System.nanoTime() - started) / 1_000_000L;
             reports.add(report);
             System.out.print(report.toTable());
@@ -110,10 +117,19 @@ public final class GameRunner {
                     new FrequencyLetterSelector(FrequencyLetterSelector.Mode.COVERAGE));
             case "occurrences" -> EvaluationHarness.Variant.selectingLetters(name,
                     new FrequencyLetterSelector(FrequencyLetterSelector.Mode.OCCURRENCES));
+            case "information" -> EvaluationHarness.Variant.selectingLetters(name,
+                    new InformationGainLetterSelector());
+            case "hopeless" -> EvaluationHarness.Variant.selectingLetters(name,
+                    new FrequencyLetterSelector(FrequencyLetterSelector.Mode.COVERAGE),
+                    SkipPolicy.hopeless());
+            case "expected-value" -> EvaluationHarness.Variant.selectingLetters(name,
+                    new FrequencyLetterSelector(FrequencyLetterSelector.Mode.COVERAGE),
+                    SkipPolicy.expectedValue());
             case "legacy" -> new EvaluationHarness.Variant(name,
                     dictionary -> LegacySolver.factory(LegacyTiers.of(dictionary)));
             default -> throw new IllegalArgumentException(
-                    "unknown variant \"" + name + "\"; expected coverage, occurrences or legacy");
+                    "unknown variant \"" + name + "\"; expected coverage, occurrences, information, "
+                            + "hopeless, expected-value or legacy");
         };
     }
 
@@ -170,7 +186,7 @@ public final class GameRunner {
 
     /** Parsed command line; validation happens in the {@link SimulationConfig} constructor. */
     private record Options(SimulationConfig config, List<String> variants, String dictionaryPath,
-                           Priors priors, double exponent, boolean help) {
+                           Priors priors, double exponent, int bestOf, boolean help) {
 
         static final String USAGE = """
                 usage: hangman [options]
@@ -187,9 +203,17 @@ public final class GameRunner {
                   --words N          words per session, a multiple of 4            (default 80)
                   --allow N          misses allowed per word                      (default 10)
                   --failure-rate F   probability that any single call fails        (default 0)
-                  --variants LIST    coverage, occurrences, legacy
+                  --best-of N        sessions played per game, highest score kept  (default 1)
+                                     models a server that scores the best submission;
+                                     the attempts run concurrently, so N costs about one
+                                     session's wall clock
+                  --variants LIST    coverage, occurrences, information, hopeless,
+                                     expected-value, legacy
                                      (default coverage,occurrences; legacy replays
-                                     the original client's decisions)
+                                     the original client's decisions; information maximises
+                                     candidate separation instead of hit rate; hopeless
+                                     and expected-value use coverage letters and differ
+                                     only in when they give a word up)
                   --dictionary PATH  word list; by default words.txt or ../words.txt is used
                   --priors M         ranked | uniform                            (default ranked)
                   --exponent F       prior strength for ranked priors, 0 = flat  (default 0.5)
@@ -212,6 +236,7 @@ public final class GameRunner {
             String dictionaryPath = null;
             Priors priors = Priors.RANKED;
             double exponent = RankWordWeighting.DEFAULT_EXPONENT;
+            int bestOf = 1;
             boolean help = false;
 
             for (int i = 0; i < args.length; i++) {
@@ -229,6 +254,7 @@ public final class GameRunner {
                     case "--dictionary" -> dictionaryPath = next(args, ++i, arg);
                     case "--priors" -> priors = priorsOf(next(args, ++i, arg));
                     case "--exponent" -> exponent = Double.parseDouble(next(args, ++i, arg));
+                    case "--best-of" -> bestOf = Integer.parseInt(next(args, ++i, arg));
                     case "--help", "-h" -> help = true;
                     default -> throw new IllegalArgumentException("unknown option: " + arg);
                 }
@@ -241,9 +267,13 @@ public final class GameRunner {
                         "--exponent only applies to --priors ranked; uniform ignores it");
             }
 
+            if (bestOf < 1) {
+                throw new IllegalArgumentException("--best-of must be at least 1, got " + bestOf);
+            }
+
             SimulationConfig config = new SimulationConfig(poolSize, sampling, difficulty, games,
                     seed, failureRate, wordsPerGame, wrongGuessesAllowed);
-            return new Options(config, variants, dictionaryPath, priors, exponent, help);
+            return new Options(config, variants, dictionaryPath, priors, exponent, bestOf, help);
         }
 
         private static String next(String[] args, int index, String option) {

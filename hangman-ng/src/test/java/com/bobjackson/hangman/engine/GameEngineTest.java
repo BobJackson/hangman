@@ -10,6 +10,7 @@ import com.bobjackson.hangman.dict.WordWeighting;
 import com.bobjackson.hangman.solver.EliminationSolver;
 import com.bobjackson.hangman.solver.FrequencyLetterSelector;
 import com.bobjackson.hangman.solver.LetterSelector;
+import com.bobjackson.hangman.solver.Solver;
 import com.bobjackson.hangman.solver.SolverFactory;
 import org.junit.jupiter.api.Test;
 
@@ -49,6 +50,40 @@ class GameEngineTest {
         assertThat(result.correctWordCount()).isEqualTo(1);
         assertThat(result.totalWrongGuessCount()).isEqualTo(3);
         assertThat(result.score()).isEqualTo(GameResult.scoreOf(1, 3));
+    }
+
+    @Test
+    void abandonsAWordWithoutSpendingAGuessWhenTheSolverAsksTo() {
+        FakeServer server = new FakeServer(List.of("CAT", "DOG"), 10);
+        SolverFactory givesUpImmediately = (first, allowed) -> new Solver() {
+            @Override
+            public char nextGuess() {
+                throw new AssertionError("a word the solver gave up on must not be guessed at");
+            }
+
+            @Override
+            public void observe(char guess, WordState state) {
+                throw new AssertionError("nothing was guessed, so nothing can be observed");
+            }
+
+            @Override
+            public int candidateCount() {
+                return 0;
+            }
+
+            @Override
+            public boolean shouldAbandon() {
+                return true;
+            }
+        };
+
+        GameResult result = new GameEngine(server, givesUpImmediately).play("player");
+
+        assertThat(result.totalWordCount()).isEqualTo(2);
+        assertThat(result.correctWordCount()).isZero();
+        assertThat(result.totalWrongGuessCount()).isZero();
+        assertThat(result.score()).isZero();
+        assertThat(server.submitted).isTrue();
     }
 
     @Test
@@ -132,7 +167,7 @@ class GameEngineTest {
         }
 
         @Override
-        public void onWordFinished(WordState state, int candidateCount, int guessesUsed) {
+        public void onWordFinished(WordState state, int candidateCount, int guessesUsed, boolean abandoned) {
             wordsFinished++;
         }
 
