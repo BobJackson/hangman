@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.bobjackson.hangman</groupId>
+    <artifactId>hangman-ng</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>hangman-ng</name>
+    <description>
+        Offline-evaluable Hangman solver for the Strikingly interview test.
+        Independent of the legacy Java 8 project in the repository root; that project is left untouched.
+    </description>
+
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <junit.version>5.11.3</junit.version>
+        <assertj.version>3.26.3</assertj.version>
+
+        <!--
+          Maven 3.8.6 bundles compiler plugin 3.1, which predates the `release` flag and
+          therefore ignores maven.compiler.release entirely: it falls back to source/target 5
+          and fails outright on a modern JDK. Pin the plugin as well as the property.
+        -->
+        <compiler-plugin.version>3.13.0</compiler-plugin.version>
+
+        <!-- Maven 3.8.6 ships Surefire 2.x, which silently skips JUnit 5 tests. Pin 3.x. -->
+        <surefire.version>3.2.5</surefire.version>
+        <jar-plugin.version>3.4.1</jar-plugin.version>
+
+        <main.class>com.bobjackson.hangman.cli.GameRunner</main.class>
+    </properties>
+
+    <dependencies>
+        <!--
+          Deliberately no runtime dependencies in M1: the offline simulator needs no HTTP
+          stack and no JSON library. Jackson / java.net.http usage arrives with the real
+          transport layer (M4).
+        -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>hangman-ng</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${compiler-plugin.version}</version>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${surefire.version}</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>${jar-plugin.version}</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>${main.class}</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

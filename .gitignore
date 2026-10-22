@@ -1,0 +1,17 @@
+# --- IDE ---
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# --- macOS ---
+.DS_Store
+
+# --- Maven ---
+target/
+
+# --- hangman-ng: external corpora, fetched by hangman-ng/tools/fetch-data.sh ---
+# Raw third-party data is not committed; only the derived, cleaned artifact under
+# hangman-ng/src/main/resources/ is.
+hangman-ng/data/
