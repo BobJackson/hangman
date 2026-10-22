@@ -16,26 +16,26 @@ The Java 8 project in the repository root is untouched. This module is independe
 | Milestone | Scope | State |
 |---|---|---|
 | **M1** | offline simulator, constraint solver, CLI, unit tests | **done** |
-| M2 | frequency-weighted priors in the solver | previewed here (`--priors ranked`), not yet the default |
+| **M2** | frequency-weighted priors, exponent knob | **done** — corpus priors are the default |
 | M3 | exact expected-miss minimisation and a skip policy | not started |
 | M4 | real HTTP client, parallel session selection | not started |
 
 ## Measured results
 
 Every number below is reproducible: `20` sessions of `80` words from a single seed, weighted
-answer sampling, cumulative difficulty tiers, uniform priors unless stated otherwise.
-A full session costs about 80 ms, so the whole table takes seconds.
+answer sampling, cumulative difficulty tiers, corpus priors (the default) unless stated
+otherwise. A full session costs about 80 ms, so the whole table takes seconds.
 
 ### Baseline and the prior effect
 
 | variant | mean | median | sd | min | max | solved | wrong/word |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `coverage`, uniform priors (M1 baseline) | **1154.10** | 1167.50 | 80.82 | 978 | 1301 | 90.5% | 3.67 |
+| `coverage`, corpus priors (default) | **1329.45** | 1331.50 | 54.32 | 1214 | 1409 | 96.1% | 2.59 |
+| `occurrences`, corpus priors | 1328.00 | 1325.50 | 52.64 | 1233 | 1405 | 96.1% | 2.61 |
+| `coverage`, uniform priors (`--priors uniform`) | **1154.10** | 1167.50 | 80.82 | 978 | 1301 | 90.5% | 3.67 |
 | `occurrences`, uniform priors | 1152.40 | 1170.00 | 78.80 | 978 | 1261 | 90.6% | 3.71 |
-| `coverage`, ranked priors (M2 preview) | **1329.45** | 1331.50 | 54.32 | 1214 | 1409 | 96.1% | 2.59 |
-| `occurrences`, ranked priors | 1328.00 | 1325.50 | 52.64 | 1233 | 1405 | 96.1% | 2.61 |
 
-The ranked-priors row lands within one point of the 1326 the legacy implementation reported
+The corpus-prior row lands within one point of the 1326 the legacy implementation reported
 against the real server in 2017 — with 78/80 correct and 234 wrong. That agreement is the
 strongest evidence available that the simulator's answer distribution is not wildly wrong: the
 model reproduces a number it was not tuned to reproduce.
@@ -44,9 +44,34 @@ The two counting modes are statistically indistinguishable (`sd` ≈ 53, differe
 `COVERAGE` stays the default because it estimates P(hit) directly; the measurement says the
 distinction is not worth arguing about.
 
+### What the prior strength is worth
+
+`--exponent` tempers the rank decay: `1` is a pure Zipf, `0` removes the ranking signal
+entirely. At `0` the measurement collapses onto `--priors uniform` exactly — the same seed
+produces a byte-identical report — so the knob has a verified left endpoint.
+
+| exponent | mean | sd | solved | wrong/word |
+|---|---:|---:|---:|---:|
+| 0 (flat) | 1150.60 | 73.17 | 90.3% | 3.68 |
+| 0.25 | 1311.02 | 53.33 | 95.5% | 2.72 |
+| **0.5 (default)** | **1322.29** | 50.91 | 95.8% | 2.63 |
+| 0.75 | 1317.17 | 52.98 | 95.5% | 2.64 |
+| 1.0 | 1308.60 | 54.36 | 95.4% | 2.72 |
+
+100 sessions per row, so the standard error of each mean is about `sd / 10` ≈ 5 points.
+
+Two readings, in order of how much they matter:
+
+1. **Whether to use the prior at all is the whole decision.** Going from flat to 0.25 is worth
+   160 points — more than every other knob in this README combined.
+2. **How strong to make it barely matters.** 0.25 through 1.0 spans 14 points, under three
+   standard errors. The default sits in the middle of that plateau. Calling it "tuned" would be
+   overreading noise; the defensible claim is that any non-zero exponent works and this one
+   needs no attention.
+
 ### Where the points go
 
-| tier | uniform priors solved | wrong/word | ranked priors solved | wrong/word |
+| tier | uniform solved | wrong/word | corpus solved | wrong/word |
 |---|---:|---:|---:|---:|
 | 1-20 (`<=5`) | 79.3% | 6.33 | 90.5% | 4.49 |
 | 21-40 (`<=8`) | 89.8% | 4.51 | 96.5% | 3.15 |
@@ -67,17 +92,38 @@ rather than asserting them.
 | tier bounds read as disjoint buckets, not cumulative | 1410.25 | 97.6% | 1.90 |
 | answers drawn uniformly instead of by frequency | 1240.50 | 93.1% | 3.12 |
 | 5% of every call fails (retry layer enabled) | 1329.45 | 96.1% | 2.59 |
-| answer pool cut to the top 5,000 (uniform priors) | 1116.70 | 89.4% | 3.93 |
-| answer pool cut to the top 1,000 (uniform priors) | 1036.00 | 85.9% | 4.23 |
 
 The fault-injection row is byte-identical to the clean run. That is the point of it: retries
 must not change the score, and here they provably do not.
+
+### Pool size defines the game, it does not tune the solver
+
+The pool is the set of words the server may ask for. Narrowing it changes what is being played,
+not how well it is played — and the two priors move in opposite directions.
+
+| answer pool | corpus priors | uniform priors |
+|---|---:|---:|
+| top 1,000 | 1461.84 | 1023.59 |
+| top 5,000 | 1446.80 | 1110.95 |
+| top 20,000 | 1412.60 | 1138.60 |
+| top 100,000 | 1322.29 | 1150.60 |
+
+100 sessions per cell, `coverage`.
+
+Under a flat prior a small pool is *harder*: its words are short, and a flat prior cannot
+separate the 16,480 candidates of five letters or fewer. Under corpus priors it is *easier*:
+the answers are exactly the words the prior ranks highest. The gap shrinks as the pool grows
+(+438 at 1,000 words, +172 at 100,000) because a larger pool is mostly long tail, where no
+prior helps much.
+
+Both readings are correct for their own world, which is why every report header prints the pool
+and why scores are only comparable at a fixed `--pool`.
 
 ## Quick start
 
 ```bash
 cd hangman-ng
-mvn test                                # 71 tests, no network, no sleeps
+mvn test                                # 74 tests, no network, no sleeps
 mvn -q package && java -jar target/hangman-ng.jar
 ```
 
@@ -87,21 +133,21 @@ The CLI plays against the offline simulator and prints one report per variant:
 hangman-ng | offline evaluation
 dictionary: /path/to/words.txt: 416264 words from 416264 lines (rejected 0, duplicates 0)
 ranking:    rank[size=96886, exponent=0.5, scale=1000000]
-priors:     uniform (every surviving candidate counts once; the M1 baseline)
+priors:     from corpus rank (rank[size=96886, exponent=0.5, scale=1000000])
 answer pool: 79971 words from the top 96886 ranked (16915 not in the dictionary, dropped)
   1-20 (<=5)      16480 words, length 3-5
   ...
 
 === coverage | 20 sessions x 80 words, weighted sampling, cumulative tiers, seed 42 ===
-sessions 20   words 1600   correct 1448 (90.5%)   wrong 5878 (3.67/word)
-score    mean 1154.10   median 1167.50   sd 80.82   min 978   max 1301
+sessions 20   words 1600   correct 1537 (96.1%)   wrong 4151 (2.59/word)
+score    mean 1329.45   median 1331.50   sd 54.32   min 1214   max 1409
 tier            words  solved    rate  wrong/word  guesses  blind
-1-20 (<=5)        400     317   79.3%        6.33    10.10   0.0%
+1-20 (<=5)        400     362   90.5%        4.49     8.40   0.0%
 ...
 ```
 
 Useful flags: `--games`, `--seed`, `--pool`, `--sampling`, `--difficulty`, `--priors`,
-`--variants`, `--failure-rate`, `--dictionary`. `--help` lists them all.
+`--exponent`, `--variants`, `--failure-rate`, `--dictionary`. `--help` lists them all.
 
 ## Why a simulator
 
@@ -197,13 +243,13 @@ which is the check that the intersection actually happened.
 
 ## Tests
 
-71 tests, no network, no sleeps, no flakiness:
+74 tests, no network, no sleeps, no flakiness:
 
 | class | what it pins down |
 |---|---|
 | `DictionaryLoaderTest` | CRLF residue, rejection and duplicate counts, length buckets |
 | `DictionaryTest` | masks, deduplication, weight validation, index immutability |
-| `RankWordWeightingTest` | rank order from the bundled resource, weight decay, `topN` |
+| `RankWordWeightingTest` | rank order, weight decay, `topN`, exponent 0 collapsing to uniform |
 | `SimulationConfigTest` | tier boundaries and both readings of the documented bounds |
 | `EliminationSolverTest` | the consistency rule, repeated letters, dictionary-miss fallback |
 | `SimulatedServerTest` | reveal-all-occurrences, miss accounting, determinism, fault injection |

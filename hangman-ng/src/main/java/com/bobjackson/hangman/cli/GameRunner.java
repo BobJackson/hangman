@@ -60,15 +60,22 @@ public final class GameRunner {
     }
 
     private static void run(Options options) throws IOException {
-        RankWordWeighting ranking = RankWordWeighting.fromClasspath();
-        WordWeighting priors = options.uniformPriors() ? WordWeighting.uniform() : ranking;
-        LoadedDictionary loaded = loadDictionary(options, ranking, priors);
-        EvaluationHarness harness = new EvaluationHarness(options.config(), loaded.dictionary(), ranking);
+        // Two rankings on purpose: `truth` is the world the simulator serves answers from and
+        // never moves; `belief` is what the solver assumes. A --exponent scan has to change
+        // only the second. Moving both at once would mean a score difference can no longer be
+        // attributed to the prior, because the answer distribution shifted with it.
+        RankWordWeighting truth = RankWordWeighting.fromClasspath();
+        RankWordWeighting belief = options.exponent() == RankWordWeighting.DEFAULT_EXPONENT
+                ? truth
+                : RankWordWeighting.fromClasspath(options.exponent());
+        WordWeighting priors = options.priors() == Priors.UNIFORM ? WordWeighting.uniform() : belief;
+        LoadedDictionary loaded = loadDictionary(options, truth, priors);
+        EvaluationHarness harness = new EvaluationHarness(options.config(), loaded.dictionary(), truth);
 
         System.out.println("hangman-ng | offline evaluation");
         System.out.println("dictionary: " + loaded.description());
-        System.out.println("ranking:    " + ranking);
-        System.out.println("priors:     " + describePriors(options, ranking));
+        System.out.println("ranking:    " + truth);
+        System.out.println("priors:     " + describePriors(options, belief));
         System.out.print(harness.describe());
         if (options.config().failureRate() > 0.0) {
             System.out.println("note: injected faults are retried without backoff so the run stays quick");
@@ -106,10 +113,10 @@ public final class GameRunner {
         };
     }
 
-    private static String describePriors(Options options, RankWordWeighting ranking) {
-        return options.uniformPriors()
+    private static String describePriors(Options options, RankWordWeighting belief) {
+        return options.priors() == Priors.UNIFORM
                 ? "uniform (every surviving candidate counts once; the M1 baseline)"
-                : "from corpus rank (" + ranking + "; the M2 model, measured early)";
+                : "from corpus rank (" + belief + ')';
     }
 
     private static LoadedDictionary loadDictionary(Options options, RankWordWeighting ranking,
@@ -154,9 +161,12 @@ public final class GameRunner {
     private record LoadedDictionary(String description, Dictionary dictionary) {
     }
 
+    /** Which belief the solver holds about how likely each surviving word is. */
+    private enum Priors { UNIFORM, RANKED }
+
     /** Parsed command line; validation happens in the {@link SimulationConfig} constructor. */
     private record Options(SimulationConfig config, List<String> variants, String dictionaryPath,
-                           boolean uniformPriors, boolean help) {
+                           Priors priors, double exponent, boolean help) {
 
         static final String USAGE = """
                 usage: hangman [options]
@@ -173,7 +183,10 @@ public final class GameRunner {
                   --failure-rate F   probability that any single call fails        (default 0)
                   --variants LIST    comma-separated: coverage, occurrences        (default both)
                   --dictionary PATH  word list; by default words.txt or ../words.txt is used
-                  --priors M         uniform | ranked                             (default uniform)
+                  --priors M         ranked | uniform                            (default ranked)
+                  --exponent F       prior strength for ranked priors, 0 = flat  (default 0.5)
+                                     moves the solver's belief only; the simulator's answer
+                                     distribution stays fixed, so a scan changes one variable
                   --help             print this message
                 """;
 
@@ -189,7 +202,8 @@ public final class GameRunner {
             int wrongGuessesAllowed = defaults.wrongGuessesAllowed();
             List<String> variants = List.of("coverage", "occurrences");
             String dictionaryPath = null;
-            boolean uniformPriors = true;
+            Priors priors = Priors.RANKED;
+            double exponent = RankWordWeighting.DEFAULT_EXPONENT;
             boolean help = false;
 
             for (int i = 0; i < args.length; i++) {
@@ -205,15 +219,23 @@ public final class GameRunner {
                     case "--failure-rate" -> failureRate = Double.parseDouble(next(args, ++i, arg));
                     case "--variants" -> variants = namesOf(next(args, ++i, arg));
                     case "--dictionary" -> dictionaryPath = next(args, ++i, arg);
-                    case "--priors" -> uniformPriors = priorsOf(next(args, ++i, arg));
+                    case "--priors" -> priors = priorsOf(next(args, ++i, arg));
+                    case "--exponent" -> exponent = Double.parseDouble(next(args, ++i, arg));
                     case "--help", "-h" -> help = true;
                     default -> throw new IllegalArgumentException("unknown option: " + arg);
                 }
             }
 
+            // Silently ignoring this pair would produce a report labelled "uniform" from a run
+            // the caller believed was testing a prior strength, so refuse instead.
+            if (priors == Priors.UNIFORM && exponent != RankWordWeighting.DEFAULT_EXPONENT) {
+                throw new IllegalArgumentException(
+                        "--exponent only applies to --priors ranked; uniform ignores it");
+            }
+
             SimulationConfig config = new SimulationConfig(poolSize, sampling, difficulty, games,
                     seed, failureRate, wordsPerGame, wrongGuessesAllowed);
-            return new Options(config, variants, dictionaryPath, uniformPriors, help);
+            return new Options(config, variants, dictionaryPath, priors, exponent, help);
         }
 
         private static String next(String[] args, int index, String option) {
@@ -241,12 +263,12 @@ public final class GameRunner {
             };
         }
 
-        private static boolean priorsOf(String raw) {
+        private static Priors priorsOf(String raw) {
             return switch (raw.toLowerCase(Locale.ROOT)) {
-                case "uniform" -> true;
-                case "ranked" -> false;
+                case "ranked" -> Priors.RANKED;
+                case "uniform" -> Priors.UNIFORM;
                 default -> throw new IllegalArgumentException(
-                        "--priors expects uniform or ranked, got \"" + raw + '"');
+                        "--priors expects ranked or uniform, got \"" + raw + '"');
             };
         }
 

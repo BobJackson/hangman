@@ -59,4 +59,38 @@ class RankWordWeightingTest {
         assertThatThrownBy(() -> RankWordWeighting.of(List.of()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void anExponentOfZeroCollapsesThePriorToUniform() {
+        RankWordWeighting flat = RankWordWeighting.of(List.of("AAA", "BBB", "CCC"), 0.0);
+
+        // Unlisted words flatten with the rest; otherwise the knob could never reach uniform.
+        assertThat(flat.weightOf("AAA"))
+                .isEqualTo(flat.weightOf("BBB"))
+                .isEqualTo(flat.weightOf("CCC"))
+                .isEqualTo(flat.weightOf("NOT_LISTED"))
+                .isEqualTo(RankWordWeighting.DEFAULT_SCALE);
+    }
+
+    @Test
+    void aSteeperExponentConcentratesWeightOnTheTopRanks() {
+        double gentle = topVsBottomRatio(RankWordWeighting.DEFAULT_EXPONENT);
+        double steep = topVsBottomRatio(1.0);
+
+        // rank ratio is (n/1)^exponent, so 3^0.5 ~ 1.73 and 3^1.0 = 3
+        assertThat(steep).isGreaterThan(gentle).isGreaterThan(1.0);
+    }
+
+    @Test
+    void loadsTheBundledRankingWithACustomExponent() {
+        RankWordWeighting flat = RankWordWeighting.fromClasspath(0.0);
+        List<String> top = flat.topN(2);
+
+        assertThat(flat.weightOf(top.get(0))).isEqualTo(flat.weightOf(top.get(1)));
+    }
+
+    private static double topVsBottomRatio(double exponent) {
+        RankWordWeighting ranking = RankWordWeighting.of(List.of("AAA", "BBB", "CCC"), exponent);
+        return (double) ranking.weightOf("AAA") / ranking.weightOf("CCC");
+    }
 }

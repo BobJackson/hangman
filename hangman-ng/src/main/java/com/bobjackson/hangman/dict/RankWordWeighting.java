@@ -28,7 +28,7 @@ import java.util.zip.GZIPInputStream;
  * position <em>is</em> its rank. Weight decays as {@code scale / rank^exponent}, clamped
  * to {@code floorWeight}. The default exponent of 0.5 is deliberately tempered: a pure
  * Zipf exponent of 1.0 would let the top few words swallow the entire distribution, while
- * 0.0 collapses back to uniform.
+ * 0.0 removes the ranking signal entirely and collapses to a uniform belief.
  */
 public final class RankWordWeighting implements WordWeighting {
 
@@ -64,7 +64,12 @@ public final class RankWordWeighting implements WordWeighting {
         this.byRank = Collections.unmodifiableList(new ArrayList<>(byRank));
         this.exponent = exponent;
         this.scale = scale;
-        this.floorWeight = floorWeight;
+        // An exponent of zero means "the ranking carries no information". Leaving the floor at
+        // its usual 1 would still push every unlisted word below every listed one, so the knob
+        // would never reach the belief it advertises. Flattening the floor too makes exponent 0
+        // collapse exactly onto WordWeighting.uniform(), which is what a scan's left endpoint
+        // has to be if the curve is to be readable.
+        this.floorWeight = exponent == 0.0 ? scale : floorWeight;
 
         this.rankOfWord = new HashMap<>(byRank.size() * 2);
         for (int i = 0; i < byRank.size(); i++) {
@@ -78,7 +83,18 @@ public final class RankWordWeighting implements WordWeighting {
 
     /** Loads {@value #DEFAULT_RESOURCE} from the classpath with default tuning. */
     public static RankWordWeighting fromClasspath() {
-        return fromClasspath(DEFAULT_RESOURCE, DEFAULT_EXPONENT, DEFAULT_SCALE, DEFAULT_FLOOR_WEIGHT);
+        return fromClasspath(DEFAULT_EXPONENT);
+    }
+
+    /**
+     * Loads {@value #DEFAULT_RESOURCE} with a custom prior strength, other tuning at defaults.
+     *
+     * <p>Choosing {@code 0.0} makes every word carry the same weight — including words the
+     * ranked list does not contain — so the result is the same belief as
+     * {@link WordWeighting#uniform()}, merely expressed through the rank machinery.
+     */
+    public static RankWordWeighting fromClasspath(double exponent) {
+        return fromClasspath(DEFAULT_RESOURCE, exponent, DEFAULT_SCALE, DEFAULT_FLOOR_WEIGHT);
     }
 
     /** Loads a ranked list from the classpath. Lines are read in order; rank = line number. */
@@ -106,7 +122,12 @@ public final class RankWordWeighting implements WordWeighting {
 
     /** Builds a weighting from an explicit rank-ordered list. Mostly for tests. */
     public static RankWordWeighting of(List<String> rankOrderedWords) {
-        return new RankWordWeighting(rankOrderedWords, DEFAULT_EXPONENT, DEFAULT_SCALE, DEFAULT_FLOOR_WEIGHT);
+        return of(rankOrderedWords, DEFAULT_EXPONENT);
+    }
+
+    /** Builds a weighting with a custom exponent. Mostly for tests. */
+    public static RankWordWeighting of(List<String> rankOrderedWords, double exponent) {
+        return new RankWordWeighting(rankOrderedWords, exponent, DEFAULT_SCALE, DEFAULT_FLOOR_WEIGHT);
     }
 
     @Override

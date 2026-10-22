@@ -1,7 +1,7 @@
 # hangman-ng — design
 
 Date: 2026-10-22
-Status: M1 implemented; M2 previewed; M3-M4 planned
+Status: M1-M2 implemented; M3-M4 planned
 
 ## Goal
 
@@ -113,7 +113,7 @@ Two lists, two jobs:
 
 | list | size | job |
 |---|---:|---|
-| rank list (`word-ranks.txt.gz`) | 96,886 | answer sampling weights; solver priors (M2) |
+| rank list (`word-ranks.txt.gz`) | 96,886 | answer sampling weights; the solver's default priors |
 | dictionary (`../words.txt`) | 416,264 | candidate set — every word the server plausibly knows |
 
 Measured overlap: 82.5% of the ranked words appear in `words.txt`. The 17.5% that do
@@ -181,24 +181,32 @@ Seed 42, 20 sessions × 80 words, weighted sampling, cumulative tiers:
 
 | variant | mean | sd | solved | wrong/word |
 |---|---:|---:|---:|---:|
+| coverage, corpus priors (default) | 1329.45 | 54.32 | 96.1% | 2.59 |
+| occurrences, corpus priors | 1328.00 | 52.64 | 96.1% | 2.61 |
 | coverage, uniform priors | 1154.10 | 80.82 | 90.5% | 3.67 |
 | occurrences, uniform priors | 1152.40 | 78.80 | 90.6% | 3.71 |
-| coverage, ranked priors | 1329.45 | 54.32 | 96.1% | 2.59 |
-| occurrences, ranked priors | 1328.00 | 52.64 | 96.1% | 2.61 |
 
-Two findings drive the remaining roadmap:
+Three findings drive the remaining roadmap:
 
 1. **Priors are worth ~175 points**, more than anything else measured so far. The legacy
    implementation's 1326 is reproduced at 1329 by this change alone.
-2. **The first tier costs most of the loss** (6.33 misses per word unweighted, versus 0.34 in
-   the last tier). Any further work should target short words with large candidate sets.
+2. **The first tier costs most of the loss** (4.49 misses per word with priors, 6.33 without,
+   versus 0.20 in the last tier). Any further work should target short words with large
+   candidate sets.
+3. **The prior's strength is not worth tuning.** 100 sessions per point: 0 → 1150.60,
+   0.25 → 1311.02, 0.5 → 1322.29, 0.75 → 1317.17, 1.0 → 1308.60. Everything from 0.25 to 1.0
+   sits inside three standard errors of the plateau; only "use it at all" matters.
+
+Pool size, 100 sessions per cell, coverage, corpus / uniform: 1,000 → 1461.84 / 1023.59,
+5,000 → 1446.80 / 1110.95, 20,000 → 1412.60 / 1138.60, 100,000 → 1322.29 / 1150.60. The two
+priors move in opposite directions, which is the evidence that the pool defines difficulty
+rather than tuning the solver: scores are comparable only at a fixed `--pool`.
 
 ## Milestones
 
 - **M1** — simulator, dictionary, solver, engine, CLI, reports, tests. Done.
-- **M2** — make ranked priors the default and re-run the sweep; add a weight-exponent knob and
-  measure it. The code path already exists behind `--priors ranked`; the milestone is the
-  measurement and the default change.
+- **M2** — corpus priors as the default, `--exponent` knob, measured. Done: the scan shows the
+  decision is binary (use corpus priors or not) and the exponent plateau is flat from 0.25 to 1.0.
 - **M3** — exact expected-miss minimisation over small candidate sets, plus a skip policy
   driven by `EV(continue) = p * (30 - k) - 10`. Both target the first tier.
 - **M4** — `HttpHangmanClient` over `java.net.http` + Jackson, and running several sessions in
@@ -216,6 +224,8 @@ Two findings drive the remaining roadmap:
 | `RetryingHangmanClient` in M1 | otherwise the simulator's fault injection is dead code with no test | defer retries to M4 |
 | tiers as a config knob | the wording admits two readings and the difference is 80 points | silently pick the legacy reading |
 | answer pool ∩ dictionary | isolates solver quality from corpus coverage | draw answers from the raw rank list |
+| `--exponent 0` flattens the floor weight too | the knob must have a verifiable left endpoint; it now reproduces `--priors uniform` byte-for-byte | leave unlisted words at floor 1, making 0 a third belief nobody asked for |
+| separate `truth` and `belief` rankings in the CLI | a prior scan must not move the answer distribution, or the result cannot be attributed | one ranking shared by simulator and solver |
 | commit the gzipped rank list | builds stay offline; 395 KB is cheap | download at build time |
 
 ## Risks
@@ -227,3 +237,5 @@ Two findings drive the remaining roadmap:
   stays in every report.
 - A greedy solver leaves value on the table on wide candidate sets. Mitigation: quantified per
   tier, and the target of M3.
+- A score without its `--pool` is meaningless, since the pool defines difficulty. Mitigation:
+  every report header prints it, and the pool sweep is in the README.
