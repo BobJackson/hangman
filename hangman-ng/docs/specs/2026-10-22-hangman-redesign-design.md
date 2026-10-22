@@ -1,7 +1,7 @@
 # hangman-ng — design
 
 Date: 2026-10-22
-Status: M1-M4 implemented and measured
+Status: M1-M5 implemented and measured
 
 ## Goal
 
@@ -38,9 +38,11 @@ asserted at runtime by `isScoreConsistent()`.
 
 Consequence for strategy: a guess is worth taking while `p(hit) * 20` exceeds the expected
 cost of the misses it may cause. Maximising P(hit) — the greedy rule the legacy implementation
-also used — is therefore the right first-order objective. Two alternatives were built and
-measured rather than argued about, and both lost: an information-gain objective by 875 points,
-and abandoning words by everything it had, since the best possible version of that is worth ten.
+also used — is therefore the right first-order objective. Three alternatives were built and
+measured rather than argued about, and all three came back small or negative: an information-gain
+objective by 875 points, abandoning words by everything it had (the best possible version is worth
+ten), and an exact lookahead worth 1.3 to 3.1 points per session on the decisions that can be
+priced.
 
 ## Module design
 
@@ -48,7 +50,8 @@ and abandoning words by everything it had, since the best possible version of th
 api        HangmanClient, StartGame, WordState, GameResult, HangmanApiException
 dict       Dictionary, DictionaryLoader, WordWeighting, RankWordWeighting
 solver     Solver, EliminationSolver, LetterSelector, FrequencyLetterSelector,
-           InformationGainLetterSelector, SkipPolicy, SkipContext, GuessContext
+           InformationGainLetterSelector, SkipPolicy, SkipContext, GuessContext,
+           ExactScore, AuditedLetterSelector, AuditSummary
 engine     GameEngine, GameListener
 sim        SimulatedServer, SimulationConfig, EvaluationHarness, BenchmarkReport
 transport  HttpHangmanClient, Json, RetryingHangmanClient, Sleeper
@@ -130,6 +133,25 @@ policy can be tested without a socket. `Json` is package-private and exists beca
 JSON library available offline here is from 2018; the protocol uses six field types and no
 nesting beyond one object.
 
+### Looking ahead without pretending
+
+A planner over the belief state is the obvious next step and it does not fit. A miss does not
+shrink the candidate set, it only spends a letter, so the reachable states grow like the ways to
+choose `k` of the letters a word does not use: `C(15, k)` summed to `k = 10` is about 2^15 per
+decision, each costing 26 letter evaluations. Truncating the search is worse than skipping it: a
+leaf value that prices only the next few turns against a whole-word scale systematically prefers
+large reveals, which is the direction that lost 875 points. So the milestone measures instead.
+
+`ExactScore` solves one decision out completely, with no heuristic leaf, so its answer is the
+true expectation. The state is (candidates, guessed mask, misses left) and the pattern is
+implicit: position `i` is revealed exactly when every candidate agrees there and that letter has
+been guessed — `EliminationSolver`'s consistency rule read backwards, so the two cannot drift
+apart. `AuditedLetterSelector` wraps `coverage`, asks `ExactScore` what the best letter was worth
+and what the chosen letter was worth, records the difference, and then plays the chosen letter
+unchanged. An audited run therefore scores bit for bit what the plain run scores; only
+`AuditSummary` differs. That is what makes the number readable as a measurement rather than a
+bet, and it is why the audit could be run on the main configuration without contaminating it.
+
 ## Data pipeline
 
 `tools/fetch-data.sh` downloads
@@ -191,10 +213,14 @@ Three ambiguities are knobs rather than assumptions:
   word, guesses per word and dictionary-miss rate, overall and per difficulty tier.
 - Comparison procedure: change one knob, hold the seed, report the delta against the
   distribution's spread. A difference smaller than the standard deviation is not a result.
+- The lookahead audit adds a second kind of evidence: an exact expected score, computed by value
+  iteration over the states small enough to finish, compared against the letter actually played.
+  It needs no seed discipline because it is not a sample; its limits are coverage, not noise, and
+  the CLI prints both the number of decisions priced and the number skipped.
 
 ## Test strategy
 
-130 tests, no network, no real sleeps.
+152 tests, no network, no real sleeps.
 
 | class | focus |
 |---|---|
@@ -205,6 +231,8 @@ Three ambiguities are knobs rather than assumptions:
 | `EliminationSolverTest` | consistency rule, repeated letters, empty-candidate fallback |
 | `SkipPolicyTest` | empty candidate sets, hit-versus-miss arithmetic, the negative-binomial tail |
 | `InformationGainLetterSelectorTest` | the 50/50 peak, symmetry, empty-candidate fallback |
+| `ExactScoreTest` | every letter against an uncached reference, the implicit pattern, budget refusal |
+| `AuditedLetterSelectorTest` | the delegate's letter played unchanged, gaps found, coverage counted |
 | `SimulatedServerTest` | reveal-all-occurrences, miss accounting, determinism, fault injection |
 | `GameEngineTest` | advertised word count, abandonment, listener contract, error propagation |
 | `EvaluationHarnessTest` | best-of-N keeps the maximum, seeds nest, concurrent runs are identical |
@@ -295,14 +323,15 @@ the difference between 73.5% and 90.0% solved.
   decision is binary (use corpus priors or not) and the exponent plateau is flat from 0.25 to 1.0.
 - **M3** — a skip policy. Done, with a negative result: `hopeless` and `expectedValue` both fire
   zero times in 8,000 words, the intuitive "not enough misses left" rule costs 13 points, and the
-  omniscient upper bound for the whole idea is ten. Kept behind `--variants`, off by default. The
-  exact expected-miss minimisation was **not** built: the one alternative objective that was tried
-  (`information`) cost 62% of the score, so the next thing to build is not another objective but a
-  measurement of how much a lookahead on the same objective could pay.
+  omniscient upper bound for the whole idea is ten. Kept behind `--variants`, off by default.
 - **M4** — `HttpHangmanClient` over `java.net.http` with a hand-written JSON codec (no Jackson),
   and best-of-N session selection. Done: +20.4 / +36.3 / +48.4 / +56.0 points for N = 2 / 4 / 8 /
   16, against `σ·e_N` predictions of +19.6 / +35.8 / +49.5 / +61.4. The attempts of one game run
   concurrently, so N = 4 costs 11% more wall clock than N = 1.
+- **M5** — an exact lookahead audit, the answer to M3's open question. Done, and small: 9% to 21%
+  of the priced decisions are not optimal, but the whole audit is worth 1.26 to 3.14 points per
+  session, because the gaps are 0.12 points apiece. It prices 1.6% to 3.7% of all choices; the
+  middle game is untouched by the number and by this milestone.
 - **C** (inserted between M2 and M3) — the legacy algorithm replayed as a control group. Done:
   it re-reads M1's headline, prices the defect table at 144 points, and settles the tier
   ambiguity in favour of buckets.
@@ -324,6 +353,29 @@ The mechanism is understood, not merely observed: the mean of a maximum of N dra
 within 1.5 points of that prediction. This is also the largest single gain in the whole exercise,
 which is the uncomfortable finding — bigger than the 144 points the rewrite was worth against the
 original, and far bigger than the ten the best possible skip rule was worth.
+
+### The lookahead audit
+
+100 games, `coverage`, seed 42, one row per setting of the three limits:
+
+| candidates / misses / states | decisions priced | not optimal | points per game foregone |
+|---|---:|---:|---:|
+| 40 / 3 / 5,000 (default) | 1,121 of 70,788 | 13.8% | 1.26 |
+| 40 / 3 / 20,000 | 1,146 of 70,788 | 14.9% | 1.30 |
+| 40 / 5 / 5,000 | 2,015 of 70,788 | 9.1% | 1.39 |
+| 80 / 3 / 5,000 | 1,260 of 70,788 | 20.9% | 1.69 |
+| 80 / 5 / 20,000 | 2,617 of 70,788 | 18.7% | 3.14 |
+
+Two readings and one prohibition. Being wrong is common and cheap: the widest row is 314 points
+over 100 sessions across 2,617 decisions, 0.12 each, because the expectation is nearly flat across
+the sensible letters — with one miss left and three candidates, a certain reveal and a one-in-three
+shot are both worth 20/3. Widening the reach 2.3× buys 1.9 points and roughly doubles the wall
+clock, so the result does not scale with coverage. And it must not be read as the total value of
+lookahead:
+the audit prices 1.6% to 3.7% of choices, and the states it cannot reach are precisely the wide
+ones with the most scope to be wrong. What it does establish is that the endgame — where the
+twenty-point swing is largest and a word is actually saved or lost — is within 0.6% to 1.6% of
+optimal, against a remaining gap of 195 points per session.
 
 ## Decisions and rejected alternatives
 
@@ -348,6 +400,10 @@ original, and far bigger than the ten the best possible skip rule was worth.
 | `HttpHangmanClient` does not retry | retry policy is testable only when it is separable, and call counts are otherwise invisible | retry inside the client, where every protocol test would need a socket |
 | seed layout `g + a * games` for best-of-N | attempt 0 of every game is the plain run's session, so best-of-N is provably not worse game by game and each session stays reproducible on its own | `g * attempts + a`, which makes every group's first session new and breaks the comparison |
 | concurrent attempts in the harness | they share nothing but immutable state; eight sessions cost one session's wall clock, which is what makes a 1,600-session measurement practical | run them sequentially and pay eight times the wall clock |
+| the pattern is rebuilt from the candidates, not stored | `GuessContext` has no pattern field and does not need one: position `i` is revealed iff every candidate agrees there and the letter is known, which is the consistency rule read backwards | add a pattern field to the public selector contract so the audit can read it |
+| the audit plays the delegate's letter, always | a measurement that changes the thing measured is an experiment with two variables; this way the audited run's score is identical by construction and the gap is a number rather than a delta with noise | let the audit return the optimal letter and measure the score difference — the difference would be dominated by the ±35-point spread |
+| over-budget decisions are refused, not truncated | a truncated recursion prices the last few turns against a whole-word scale, which systematically prefers large reveals — the 875-point mistake | cap the depth and accept a biased answer |
+| the three audit limits are CLI flags | the README claims the audit covers 1.6% of choices; a reader must be able to widen that and watch the number, or the claim is unauditable | hard-code the limits and report one row |
 
 ## Risks
 
@@ -358,9 +414,10 @@ original, and far bigger than the ten the best possible skip rule was worth.
   stays in every report.
 - A greedy solver leaves value on the table on wide candidate sets. Partly mitigated: the
   information-gain alternative was built and measured (−875), so "greedy is wrong" is no longer
-  an untested intuition; what remains untested is a lookahead on the *same* objective, whose size
-  nothing here estimates. The skip lever, which was the other half of that worry, is bounded at
-  ten points.
+  an untested intuition, and the endgame is now priced exactly at 1.3 to 3.1 points. What stays
+  untested is the middle game — a thousand candidates, most misses in hand — where the audit's
+  state space does not fit and no number here covers it. That is the honest hole, and it is the
+  one place a lookahead policy could still be hiding.
 - Best-of-N depends on a rule the instructions never state: which of several submissions counts.
   Mitigation: the CLI says so on every best-of run, and the README states which reading each row
   assumes.

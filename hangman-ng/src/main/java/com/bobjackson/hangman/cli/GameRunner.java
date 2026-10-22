@@ -9,6 +9,8 @@ import com.bobjackson.hangman.legacy.LegacyTiers;
 import com.bobjackson.hangman.sim.BenchmarkReport;
 import com.bobjackson.hangman.sim.EvaluationHarness;
 import com.bobjackson.hangman.sim.SimulationConfig;
+import com.bobjackson.hangman.solver.AuditSummary;
+import com.bobjackson.hangman.solver.AuditedLetterSelector;
 import com.bobjackson.hangman.solver.FrequencyLetterSelector;
 import com.bobjackson.hangman.solver.InformationGainLetterSelector;
 import com.bobjackson.hangman.solver.SkipPolicy;
@@ -20,6 +22,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * Command-line entry point for offline evaluation.
@@ -93,12 +96,18 @@ public final class GameRunner {
 
         List<BenchmarkReport> reports = new ArrayList<>();
         for (String name : options.variants()) {
-            EvaluationHarness.Variant variant = variant(name);
+            // The audit produces a number, not a score: the selector plays what coverage plays
+            // and only records what the best letter would have been worth.
+            AuditSummary audit = name.equals("audited") ? new AuditSummary() : null;
+            EvaluationHarness.Variant variant = variant(name, audit, options.audit());
             long started = System.nanoTime();
             BenchmarkReport report = harness.runBestOf(variant, options.bestOf());
             long elapsedMillis = (System.nanoTime() - started) / 1_000_000L;
             reports.add(report);
             System.out.print(report.toTable());
+            if (audit != null) {
+                System.out.print(audit.describe(options.config().games()));
+            }
             System.out.println("elapsed: " + elapsedMillis + " ms");
             System.out.println();
         }
@@ -111,7 +120,7 @@ public final class GameRunner {
         }
     }
 
-    private static EvaluationHarness.Variant variant(String name) {
+    private static EvaluationHarness.Variant variant(String name, AuditSummary audit, AuditLimits limits) {
         return switch (name) {
             case "coverage" -> EvaluationHarness.Variant.selectingLetters(name,
                     new FrequencyLetterSelector(FrequencyLetterSelector.Mode.COVERAGE));
@@ -119,6 +128,11 @@ public final class GameRunner {
                     new FrequencyLetterSelector(FrequencyLetterSelector.Mode.OCCURRENCES));
             case "information" -> EvaluationHarness.Variant.selectingLetters(name,
                     new InformationGainLetterSelector());
+            case "audited" -> EvaluationHarness.Variant.selectingLetters(name,
+                    new AuditedLetterSelector(
+                            new FrequencyLetterSelector(FrequencyLetterSelector.Mode.COVERAGE),
+                            Objects.requireNonNull(audit, "an audited variant needs its summary"),
+                            limits.maxCandidates(), limits.maxMissesLeft(), limits.nodeBudget()));
             case "hopeless" -> EvaluationHarness.Variant.selectingLetters(name,
                     new FrequencyLetterSelector(FrequencyLetterSelector.Mode.COVERAGE),
                     SkipPolicy.hopeless());
@@ -129,7 +143,7 @@ public final class GameRunner {
                     dictionary -> LegacySolver.factory(LegacyTiers.of(dictionary)));
             default -> throw new IllegalArgumentException(
                     "unknown variant \"" + name + "\"; expected coverage, occurrences, information, "
-                            + "hopeless, expected-value or legacy");
+                            + "audited, hopeless, expected-value or legacy");
         };
     }
 
@@ -184,9 +198,19 @@ public final class GameRunner {
     /** Which belief the solver holds about how likely each surviving word is. */
     private enum Priors { UNIFORM, RANKED }
 
+    /** How far the audit is allowed to reach; see {@link AuditedLetterSelector} for the why. */
+    private record AuditLimits(int maxCandidates, int maxMissesLeft, int nodeBudget) {
+
+        static final AuditLimits DEFAULTS = new AuditLimits(
+                AuditedLetterSelector.DEFAULT_MAX_CANDIDATES,
+                AuditedLetterSelector.DEFAULT_MAX_MISSES_LEFT,
+                AuditedLetterSelector.DEFAULT_NODE_BUDGET);
+    }
+
     /** Parsed command line; validation happens in the {@link SimulationConfig} constructor. */
     private record Options(SimulationConfig config, List<String> variants, String dictionaryPath,
-                           Priors priors, double exponent, int bestOf, boolean help) {
+                           Priors priors, double exponent, int bestOf, AuditLimits audit,
+                           boolean help) {
 
         static final String USAGE = """
                 usage: hangman [options]
@@ -207,13 +231,21 @@ public final class GameRunner {
                                      models a server that scores the best submission;
                                      the attempts run concurrently, so N costs about one
                                      session's wall clock
-                  --variants LIST    coverage, occurrences, information, hopeless,
+                  --variants LIST    coverage, occurrences, information, audited, hopeless,
                                      expected-value, legacy
                                      (default coverage,occurrences; legacy replays
                                      the original client's decisions; information maximises
-                                     candidate separation instead of hit rate; hopeless
-                                     and expected-value use coverage letters and differ
-                                     only in when they give a word up)
+                                     candidate separation instead of hit rate; audited plays
+                                     coverage and prices its choices where the rest of the
+                                     word can be solved out exactly; hopeless and
+                                     expected-value use coverage letters and differ only in
+                                     when they give a word up)
+                  --audit-candidates N
+                                     largest candidate set the audit will price (default 40)
+                  --audit-misses N   most misses in hand the audit will price (default 3)
+                  --audit-budget N   states one audited decision may expand   (default 5000)
+                                     the three above only affect --variants audited; a
+                                     decision over any of them is counted, never guessed at
                   --dictionary PATH  word list; by default words.txt or ../words.txt is used
                   --priors M         ranked | uniform                            (default ranked)
                   --exponent F       prior strength for ranked priors, 0 = flat  (default 0.5)
@@ -237,6 +269,7 @@ public final class GameRunner {
             Priors priors = Priors.RANKED;
             double exponent = RankWordWeighting.DEFAULT_EXPONENT;
             int bestOf = 1;
+            AuditLimits audit = AuditLimits.DEFAULTS;
             boolean help = false;
 
             for (int i = 0; i < args.length; i++) {
@@ -255,6 +288,12 @@ public final class GameRunner {
                     case "--priors" -> priors = priorsOf(next(args, ++i, arg));
                     case "--exponent" -> exponent = Double.parseDouble(next(args, ++i, arg));
                     case "--best-of" -> bestOf = Integer.parseInt(next(args, ++i, arg));
+                    case "--audit-candidates" -> audit = new AuditLimits(
+                            Integer.parseInt(next(args, ++i, arg)), audit.maxMissesLeft(), audit.nodeBudget());
+                    case "--audit-misses" -> audit = new AuditLimits(
+                            audit.maxCandidates(), Integer.parseInt(next(args, ++i, arg)), audit.nodeBudget());
+                    case "--audit-budget" -> audit = new AuditLimits(
+                            audit.maxCandidates(), audit.maxMissesLeft(), Integer.parseInt(next(args, ++i, arg)));
                     case "--help", "-h" -> help = true;
                     default -> throw new IllegalArgumentException("unknown option: " + arg);
                 }
@@ -270,10 +309,14 @@ public final class GameRunner {
             if (bestOf < 1) {
                 throw new IllegalArgumentException("--best-of must be at least 1, got " + bestOf);
             }
+            if (audit.maxCandidates() < 1 || audit.maxMissesLeft() < 1 || audit.nodeBudget() < 1) {
+                throw new IllegalArgumentException("--audit-candidates, --audit-misses and "
+                        + "--audit-budget must all be at least 1, got " + audit);
+            }
 
             SimulationConfig config = new SimulationConfig(poolSize, sampling, difficulty, games,
                     seed, failureRate, wordsPerGame, wrongGuessesAllowed);
-            return new Options(config, variants, dictionaryPath, priors, exponent, bestOf, help);
+            return new Options(config, variants, dictionaryPath, priors, exponent, bestOf, audit, help);
         }
 
         private static String next(String[] args, int index, String option) {

@@ -20,6 +20,7 @@ The Java 8 project in the repository root is untouched. This module is independe
 | **C** | the legacy algorithm replayed in-module as a control group | **done** — and it re-reads M1's headline |
 | **M3** | a skip policy: give a word up rather than run out of misses | **done** — measured, and switched off |
 | **M4** | real HTTP client, parallel session selection | **done** — the HTTP half cannot be exercised (the endpoint is gone); best-of-N is worth +48 |
+| **M5** | an exact lookahead audit on the states that can be solved out | **done** — 1.3 to 3.1 points per session, on the 1.6% of decisions that can be priced |
 
 ## Measured results
 
@@ -244,6 +245,56 @@ describes the winning session, so it reads optimistic; only the score line is un
 worth, and the ~10 that the best possible skip rule was worth. The cheapest remaining points were
 never in the algorithm.
 
+### Looking further ahead is worth 1.3 to 3.1 points, on the 1.6% of decisions that can be priced
+
+The last unmeasured question was whether the greedy step is actually the best one. Answering it in
+general needs a planner over the belief state, and that state space does not fit: a miss does not
+shrink the candidate set, it only spends a letter, so the reachable states grow like the ways to
+choose `k` of the letters a word does not use — `C(15, k)` summed to `k = 10` is about 2^15 per
+decision, each costing 26 letter evaluations. One decision would be hundreds of millions of
+operations. Truncating the search is worse than not running it at all: a leaf priced as if it were
+the whole word, against a search that only looks two turns deep, systematically prefers letters
+that reveal a lot now — the exact direction that cost the information-gain variant 875 points.
+
+So the audit goes the other way. `audited` plays `coverage`'s letter, unchanged, and only on
+states small enough to solve out exactly it computes what every available letter was worth and
+records the difference. An audited run therefore scores bit for bit what the plain run scores, and
+the number it prints is a measurement rather than a bet.
+
+100 sessions, `coverage`, same seed. Each row is one setting of the three limits —
+`--audit-candidates`, `--audit-misses`, `--audit-budget`:
+
+| limits (candidates / misses / states) | decisions priced | not optimal | points per game foregone |
+|---|---:|---:|---:|
+| 40 / 3 / 5,000 (default) | 1,121 of 70,788 | 13.8% | 1.26 |
+| 40 / 3 / 20,000 | 1,146 of 70,788 | 14.9% | 1.30 |
+| 40 / 5 / 5,000 | 2,015 of 70,788 | 9.1% | 1.39 |
+| 80 / 3 / 5,000 | 1,260 of 70,788 | 20.9% | 1.69 |
+| 80 / 5 / 20,000 | 2,617 of 70,788 | 18.7% | 3.14 |
+
+Two things to read here, and one that must not be read.
+
+**Being wrong is common; being wrong expensively is not.** Between 9% and 21% of the priced
+decisions are not optimal, but the widest row is worth 314 points across 100 sessions over 2,617
+decisions — 0.12 points each. The gaps are small because the expectation is nearly flat across the
+reasonable letters near the end of a word: with one miss left and three candidates, the certain
+reveal and the one-in-three shot are both worth `20/3`.
+
+**Widening the limits barely moves the answer.** Reaching 2.3× further than the default roughly
+doubles the wall clock and buys 1.9 points per game. Whatever lookahead is worth here, it does not
+scale with the fraction of decisions inspected.
+
+**What must not be read: that lookahead is worth three points in total.** The audit prices 1.6% to
+3.7% of all choices. Middle-game decisions — a thousand candidates, most misses still in hand —
+are exactly the ones the budget cannot reach, and exactly the ones with the most room to be wrong.
+The table says the endgame, where a word is actually saved or lost and the twenty-point swing is
+largest, is nearly optimally played. It says nothing about the rest of the game, and it cannot.
+
+What it does say is enough to order the work. Against a remaining gap of 195 points per session,
+an endgame that is short by 0.6% to 1.6% is not where the next milestone is. Reproduce with
+`--variants coverage,audited`; the three limits exist so the coverage claim can be checked rather
+than taken.
+
 ### Sensitivity: what the remaining guesses are worth
 
 The control group settled the tier question — that one is no longer a guess. Two properties of
@@ -290,7 +341,7 @@ The bucket reading removes that path, and with it the effect.
 
 ```bash
 cd hangman-ng
-mvn test                                # 130 tests, no network, no sleeps
+mvn test                                # 152 tests, no network, no sleeps
 mvn -q package && java -jar target/hangman-ng.jar
 ```
 
@@ -316,9 +367,9 @@ tier            words  solved    rate  wrong/word  guesses skipped  blind
 ```
 
 Useful flags: `--games`, `--seed`, `--pool`, `--sampling`, `--difficulty`, `--priors`,
-`--exponent`, `--variants` (`coverage`, `occurrences`, `information`, `hopeless`,
-`expected-value`, `legacy`), `--best-of`, `--failure-rate`, `--dictionary`. `--help` lists them
-all.
+`--exponent`, `--variants` (`coverage`, `occurrences`, `information`, `audited`, `hopeless`,
+`expected-value`, `legacy`), `--best-of`, `--failure-rate`, `--dictionary`, and the three audit
+limits `--audit-candidates`, `--audit-misses`, `--audit-budget`. `--help` lists them all.
 
 ## Why a simulator
 
@@ -357,10 +408,11 @@ so `score = 20 * correctWordCount - totalWrongGuessCount`. This lives in
 whose reported score disagrees with the formula is a server whose rules have changed.
 
 The practical consequence: a guess is worth making whenever `p(hit) * 20` exceeds the expected
-cost of the misses it might cause. That is why the solver maximises coverage. Both of the
-obvious alternatives were built and measured rather than argued about, and both lost by the
-arithmetic: an information-gain objective by 875 points, and giving words up by everything it
-had, since the best possible version of that is worth ten.
+cost of the misses it might cause. That is why the solver maximises coverage. Three alternatives
+to that greedy step were measured instead of argued about, and all three came back small or
+negative: an information-gain objective loses 875 points, giving words up is worth ten with
+perfect foresight, and an exact lookahead over the decisions small enough to solve out is worth
+1.3 to 3.1 points per session.
 
 ## Architecture
 
@@ -368,7 +420,7 @@ had, since the best possible version of that is worth ten.
 |---|---|---|
 | `api` | typed records for the five actions; no transport | — |
 | `dict` | immutable dictionary, length buckets, 26-bit masks, rank-weighted priors | `api` |
-| `solver` | constraint elimination, letter selection, skip policy | `api`, `dict` |
+| `solver` | constraint elimination, letter selection, skip policy, exact lookahead audit | `api`, `dict` |
 | `legacy` | the original client's decision logic, replayed as a control group | `api`, `dict`, `solver` |
 | `engine` | the game state machine and observation hooks | `api`, `solver` |
 | `sim` | simulated server, harness, benchmark report | all of the above |
@@ -423,7 +475,7 @@ which is the check that the intersection actually happened.
 
 ## Tests
 
-130 tests, no network, no sleeps, no flakiness:
+152 tests, no network, no sleeps, no flakiness:
 
 | class | what it pins down |
 |---|---|
@@ -434,6 +486,8 @@ which is the check that the intersection actually happened.
 | `EliminationSolverTest` | the consistency rule, repeated letters, dictionary-miss fallback |
 | `SkipPolicyTest` | empty candidate sets, the hit-versus-miss arithmetic, the negative-binomial tail |
 | `InformationGainLetterSelectorTest` | the 50/50 peak, symmetry, empty-candidate fallback |
+| `ExactScoreTest` | every letter against an uncached reference, the implicit pattern, the budget |
+| `AuditedLetterSelectorTest` | the delegate's letter is played unchanged, gaps are found and counted |
 | `SimulatedServerTest` | reveal-all-occurrences, miss accounting, determinism, fault injection |
 | `GameEngineTest` | advertised word count, abandonment, listener contract, failure propagation |
 | `EvaluationHarnessTest` | best-of-N keeps the maximum, seeds nest, concurrent runs are identical |
@@ -460,11 +514,11 @@ waiting for it. The HTTP client is tested against `com.sun.net.httpserver.HttpSe
 - The legacy replay is faithful to the decisions, not to the runtime. It skips letters already
   guessed, where the original could repeat one; that deviation can only raise the legacy score,
   so every gap reported here is a lower bound on the real one.
-- The solver is greedy, not optimal. What was ruled out: an information-gain objective, which
-  loses 875 points, and giving words up, whose omniscient upper bound is ten. What is still
-  unmeasured is an exact expected-miss minimisation over the belief state — a planner that keeps
-  the hit-rate objective but looks further ahead. Nothing here estimates its size; the one
-  alternative objective that was tried cost 62% of the score, which is why it was not built next.
+- The solver is greedy, not optimal. The alternatives were measured rather than argued about: an
+  information-gain objective costs 875 points, giving words up is worth ten with perfect foresight
+  and less than nothing without it, and an exact lookahead is worth 1.3 to 3.1 points per session on
+  the decisions small enough to solve out. That last number covers 1.6% to 3.7% of all choices; the
+  middle game is not priced here and no estimate of it is offered.
 - `HttpHangmanClient` has never talked to the real server, because there is no real server. It
   is tested against a local stub of the documented protocol, so what it proves is that the
   documented shape is handled; the prose in the instructions is the only evidence about the
