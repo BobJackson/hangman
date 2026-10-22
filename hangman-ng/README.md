@@ -23,35 +23,32 @@ The Java 8 project in the repository root is untouched. This module is independe
 
 ## Measured results
 
-Every number below is reproducible: `20` sessions of `80` words from a single seed, weighted
-answer sampling, cumulative difficulty tiers, corpus priors (the default) unless stated
-otherwise. A full session costs about 80 ms, so the whole table takes seconds.
+Every number below is reproducible: `100` sessions of `80` words from a single seed, weighted
+answer sampling, bucketed difficulty tiers — the reading the original server used, settled by
+the control group below — and corpus priors wherever priors apply. A full session costs about
+120 ms, so the whole table takes a couple of minutes.
 
 ### Baseline and the prior effect
 
 | variant | mean | median | sd | min | max | solved | wrong/word |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `coverage`, corpus priors (default) | **1329.45** | 1331.50 | 54.32 | 1214 | 1409 | 96.1% | 2.59 |
-| `occurrences`, corpus priors | 1328.00 | 1325.50 | 52.64 | 1233 | 1405 | 96.1% | 2.61 |
-| `coverage`, uniform priors (`--priors uniform`) | **1154.10** | 1167.50 | 80.82 | 978 | 1301 | 90.5% | 3.67 |
-| `occurrences`, uniform priors | 1152.40 | 1170.00 | 78.80 | 978 | 1261 | 90.6% | 3.71 |
+| `coverage`, corpus priors (default) | **1404.65** | 1412.00 | 34.75 | 1316 | 1474 | 97.5% | 1.94 |
+| `occurrences`, corpus priors | 1401.07 | 1405.00 | 38.41 | 1295 | 1469 | 97.4% | 1.96 |
+| `coverage`, uniform priors (`--priors uniform`) | **1286.04** | 1292.50 | 51.70 | 1150 | 1401 | 94.1% | 2.75 |
+| `occurrences`, uniform priors | 1281.28 | 1285.00 | 50.88 | 1128 | 1395 | 94.1% | 2.80 |
 
-An earlier draft of this section called the near-match with the 1326 the legacy implementation
-reported in 2017 the strongest available evidence that the simulator's answer distribution was
-right. **The control group below withdraws that claim.** 1326 is a single session, not a mean,
-and the two numbers came from different programs playing different games: `coverage` under
-cumulative tiers versus the legacy client under the disjoint buckets it actually used. It was a
-coincidence that read as a validation.
+Priors are worth **119 points** (1404.65 − 1286.04) against a standard error of about 6, which
+is the largest single effect measured anywhere in this README.
 
-What survives is weaker but sound: replaying the legacy logic under cumulative tiers scores
-841.13, five standard deviations below 1326, so the server cannot have used that reading. Under
-the bucket reading it scores 1260.24 ± 50.30, and 1326 sits 1.31 standard deviations above that
-mean — an ordinary single-session draw. That is the agreement worth trusting, because it
-compares one program to itself.
-
-The two counting modes are statistically indistinguishable (`sd` ≈ 53, difference ≈ 1.5).
+The two counting modes are statistically indistinguishable (`sd` ≈ 36, difference ≈ 3.6).
 `COVERAGE` stays the default because it estimates P(hit) directly; the measurement says the
 distinction is not worth arguing about.
+
+An earlier draft of this section read a similar-looking number (1329) as the strongest evidence
+that the simulator matched the real server, which reported 1326. That was wrong twice: 1326 is
+a single session rather than a mean, and the comparison crossed two different programs playing
+two different tier readings. The control group below does that comparison properly, and it is
+what moved the default `--difficulty` from `cumulative` to `bucketed`.
 
 ### What the prior strength is worth
 
@@ -61,35 +58,42 @@ produces a byte-identical report — so the knob has a verified left endpoint.
 
 | exponent | mean | sd | solved | wrong/word |
 |---|---:|---:|---:|---:|
-| 0 (flat) | 1150.60 | 73.17 | 90.3% | 3.68 |
-| 0.25 | 1311.02 | 53.33 | 95.5% | 2.72 |
-| **0.5 (default)** | **1322.29** | 50.91 | 95.8% | 2.63 |
-| 0.75 | 1317.17 | 52.98 | 95.5% | 2.64 |
-| 1.0 | 1308.60 | 54.36 | 95.4% | 2.72 |
+| 0 (flat) | 1286.04 | 51.70 | 94.1% | 2.75 |
+| 0.25 | 1396.72 | 33.28 | 97.3% | 1.99 |
+| **0.5 (default)** | **1404.65** | 34.75 | 97.5% | 1.94 |
+| 0.75 | 1401.62 | 36.13 | 97.4% | 1.95 |
+| 1.0 | 1395.29 | 39.39 | 97.2% | 2.00 |
 
-100 sessions per row, so the standard error of each mean is about `sd / 10` ≈ 5 points.
+100 sessions per row, so the standard error of each mean is about `sd / 10` ≈ 3.5 points.
 
 Two readings, in order of how much they matter:
 
 1. **Whether to use the prior at all is the whole decision.** Going from flat to 0.25 is worth
-   160 points — more than every other knob in this README combined.
-2. **How strong to make it barely matters.** 0.25 through 1.0 spans 14 points, under three
-   standard errors. The default sits in the middle of that plateau. Calling it "tuned" would be
-   overreading noise; the defensible claim is that any non-zero exponent works and this one
-   needs no attention.
+   111 points — more than every other knob in this README combined.
+2. **How strong to make it barely matters.** 0.25 through 1.0 spans 9 points, under three
+   standard errors. `0.5` happens to be the highest point measured, but it leads its neighbours
+   by about one standard error, so calling it "tuned" would be overreading noise. The
+   defensible claim is that any non-zero exponent works and this one needs no attention.
 
 ### Where the points go
 
 | tier | uniform solved | wrong/word | corpus solved | wrong/word |
 |---|---:|---:|---:|---:|
-| 1-20 (`<=5`) | 79.3% | 6.33 | 90.5% | 4.49 |
-| 21-40 (`<=8`) | 89.8% | 4.51 | 96.5% | 3.15 |
-| 41-60 (`<=12`) | 93.0% | 3.52 | 97.3% | 2.54 |
-| 61-80 (`>12`) | 100% | 0.34 | 100% | 0.20 |
+| 1-20 (3-5) | 77.1% | 6.48 | 90.0% | 4.63 |
+| 21-40 (6-8) | 99.4% | 3.08 | 100.0% | 2.18 |
+| 41-60 (9-12) | 100% | 1.12 | 100.0% | 0.75 |
+| 61-80 (13+) | 100% | 0.32 | 100.0% | 0.20 |
 
 Short words cost almost everything, and long words cost almost nothing — the latter confirming
 the original author's intuition that by the time words get long, a big dictionary makes them
-nearly free. The first tier is where the remaining score is hiding.
+nearly free. The first tier is where the remaining score is hiding: 4.63 misses per word on a
+quarter of the words accounts for 60% of every miss in the game, against an average of 1.94.
+The last tier is solved every time by both priors.
+
+The first tier is identical under both readings — `<=5` and `3-5` name the same set, since no
+word is shorter than three letters. The bucket reading bites on the second tier, where it asks
+for 6-8 letters specifically (33,887 candidates) instead of anything up to eight (50,367). That
+is why this table is milder than the cumulative one.
 
 ### The control group: what the old code was worth
 
@@ -149,40 +153,46 @@ the server are still modelled rather than known, and the harness measures them:
 
 | assumption changed | mean score | solved | wrong/word |
 |---|---:|---:|---:|
-| answers drawn uniformly instead of by frequency | 1240.50 | 93.1% | 3.12 |
-| 5% of every call fails (retry layer enabled) | 1329.45 | 96.1% | 2.59 |
+| answers drawn uniformly instead of by frequency | 1341.99 | 95.8% | 2.39 |
+| 5% of every call fails (retry layer enabled) | 1404.65 | 97.5% | 1.94 |
 
 The fault-injection row is byte-identical to the clean run. That is the point of it: retries
 must not change the score, and here they provably do not.
 
-### Pool size defines the game, it does not tune the solver
+### Pool size is difficulty, but only against a prior
 
 The pool is the set of words the server may ask for. Narrowing it changes what is being played,
-not how well it is played — and the two priors move in opposite directions.
+but only one of the two solvers notices.
 
 | answer pool | corpus priors | uniform priors |
 |---|---:|---:|
-| top 1,000 | 1461.84 | 1023.59 |
-| top 5,000 | 1446.80 | 1110.95 |
-| top 20,000 | 1412.60 | 1138.60 |
-| top 100,000 | 1322.29 | 1150.60 |
+| top 1,000 | 1511.47 | 1279.23 |
+| top 5,000 | 1498.22 | 1297.46 |
+| top 20,000 | 1468.32 | 1286.65 |
+| top 100,000 | 1404.65 | 1286.04 |
 
-100 sessions per cell, `coverage`.
+100 sessions per cell, `coverage`, bucketed tiers.
 
-Under a flat prior a small pool is *harder*: its words are short, and a flat prior cannot
-separate the 16,480 candidates of five letters or fewer. Under corpus priors it is *easier*:
-the answers are exactly the words the prior ranks highest. The gap shrinks as the pool grows
-(+438 at 1,000 words, +172 at 100,000) because a larger pool is mostly long tail, where no
-prior helps much.
+Corpus priors lose **107 points** as the pool widens. Uniform priors move between 1279 and 1297
+with no trend at all — an 18-point spread against a standard error near 5, small beside the
+107-point slope. So the pool is not a difficulty knob in general; it is a difficulty knob for a
+solver that reads the corpus. A small pool is easier for corpus priors because its answers are
+exactly the words those priors rank highest. It does nothing for a solver with no ranking
+signal, which has to pick letters the same way no matter which words are eligible.
 
-Both readings are correct for their own world, which is why every report header prints the pool
-and why scores are only comparable at a fixed `--pool`.
+The gap therefore narrows from +232 at 1,000 words to +119 at 100,000: a larger pool is mostly
+long tail, where no prior helps much.
+
+Scores are comparable only at a fixed `--pool`, which is why every report header prints it.
+Under cumulative tiers the uniform column *did* slope (1024 → 1151), because there a short
+answer could land in a tier whose candidate set spans the whole short end of the dictionary.
+The bucket reading removes that path, and with it the effect.
 
 ## Quick start
 
 ```bash
 cd hangman-ng
-mvn test                                # 83 tests, no network, no sleeps
+mvn test                                # 84 tests, no network, no sleeps
 mvn -q package && java -jar target/hangman-ng.jar
 ```
 
@@ -194,14 +204,15 @@ dictionary: /path/to/words.txt: 416264 words from 416264 lines (rejected 0, dupl
 ranking:    rank[size=96886, exponent=0.5, scale=1000000]
 priors:     from corpus rank (rank[size=96886, exponent=0.5, scale=1000000])
 answer pool: 79971 words from the top 96886 ranked (16915 not in the dictionary, dropped)
-  1-20 (<=5)      16480 words, length 3-5
+  1-20 (3-5)      16480 words, length 3-5
+  21-40 (6-8)     33887 words, length 6-8
   ...
 
-=== coverage | 20 sessions x 80 words, weighted sampling, cumulative tiers, seed 42 ===
-sessions 20   words 1600   correct 1537 (96.1%)   wrong 4151 (2.59/word)
-score    mean 1329.45   median 1331.50   sd 54.32   min 1214   max 1409
+=== coverage | 20 sessions x 80 words, weighted sampling, bucketed tiers, seed 42 ===
+sessions 20   words 1600   correct 1562 (97.6%)   wrong 3035 (1.90/word)
+score    mean 1410.25   median 1416.00   sd 38.96   min 1320   max 1474
 tier            words  solved    rate  wrong/word  guesses  blind
-1-20 (<=5)        400     362   90.5%        4.49     8.40   0.0%
+1-20 (3-5)        400     362   90.5%        4.49     8.40   0.0%
 ...
 ```
 
@@ -222,13 +233,12 @@ Three things it models deliberately, because they are where the specification is
 - **Answers are drawn by corpus frequency**, not uniformly. A uniform draw over 100k words
   serves things no product would ask for. `--sampling uniform` measures that pessimistic
   world too.
-- **Tier bounds are a knob, and the control group settles which reading the server used.** The
-  instructions write `<=5`, `<=8`, `<=12`, `>12`, which reads as cumulative; the legacy client
-  built disjoint buckets instead. Replaying the legacy logic under both readings shows that
-  only the bucket reading can produce the 1326 it actually scored, so the client was following
-  the server, not corrupting it. `--difficulty` defaults to `cumulative` because that is what
-  the document says — but the `bucketed` rows are the ones that describe the game that was
-  played, and every headline number above is the cumulative one.
+- **Tier bounds follow the server, not the document.** The instructions write `<=5`, `<=8`,
+  `<=12`, `>12`, which reads as cumulative; the legacy client built disjoint buckets instead.
+  Replaying the legacy logic under both readings shows that only the bucket reading can produce
+  the 1326 it actually scored, so the client was following the server. `--difficulty` therefore
+  defaults to `bucketed`; `cumulative` stays available for anyone who wants to play the game
+  the instructions describe.
 - **Faults are injected before any state change**, so a retried call cannot double-count a
   guess. The retry layer is therefore safe by construction, not by luck.
 
@@ -311,7 +321,7 @@ which is the check that the intersection actually happened.
 
 ## Tests
 
-83 tests, no network, no sleeps, no flakiness:
+84 tests, no network, no sleeps, no flakiness:
 
 | class | what it pins down |
 |---|---|
@@ -334,11 +344,10 @@ waiting for it.
 
 - The answer distribution is a model, not the server. The sensitivity table above is the honest
   bound on what that is worth.
-- **The default `--difficulty` is not the server's.** The control group shows the original server
-  used disjoint buckets, but the CLI still defaults to the cumulative reading because that is
-  what the instructions say. Every headline number in this README is therefore a slightly
-  harder game than the one actually played, and the two are not interchangeable: the same code
-  scores 1404.65 under buckets and 1322.29 under cumulative. Compare like with like.
+- The tier reading is inferred from one data point plus a faithful replay, not from the
+  server's source. It is the strongest inference available — a 5σ gap separates the two
+  readings — but it does rest on 1326 being an honest session. `--difficulty cumulative`
+  reproduces the other world (1322.29 instead of 1404.65) for anyone who wants to see it.
 - The legacy replay is faithful to the decisions, not to the runtime. It skips letters already
   guessed, where the original could repeat one; that deviation can only raise the legacy score,
   so every gap reported here is a lower bound on the real one.

@@ -146,7 +146,9 @@ Three ambiguities are knobs rather than assumptions:
 
 ## Evaluation protocol
 
-- `--games 20` sessions per variant, `--words 80`, `--seed 42`.
+- `--games 100` sessions per variant, `--words 80`, `--seed 42`. Twenty is enough to see a
+  100-point effect but not a 10-point one, and the exponent plateau turned out to live in that
+  second range.
 - Each session derives its own seed as `seed + i * 1_000_003`, so session *i* is identical
   regardless of how many sessions the run contains — a single bad session is reproducible on
   its own.
@@ -157,14 +159,14 @@ Three ambiguities are knobs rather than assumptions:
 
 ## Test strategy
 
-83 tests, no network, no real sleeps.
+84 tests, no network, no real sleeps.
 
 | class | focus |
 |---|---|
 | `DictionaryLoaderTest` | CRLF residue, rejection/duplicate accounting, length buckets |
 | `DictionaryTest` | masks, deduplication, weight validation, index immutability |
 | `RankWordWeightingTest` | rank order, weight decay, `topN` bounds |
-| `SimulationConfigTest` | tier boundaries, both readings of the documented bounds |
+| `SimulationConfigTest` | tier boundaries, both readings, the bucketed default |
 | `EliminationSolverTest` | consistency rule, repeated letters, empty-candidate fallback |
 | `SimulatedServerTest` | reveal-all-occurrences, miss accounting, determinism, fault injection |
 | `GameEngineTest` | advertised word count, abandonment, listener contract, error propagation |
@@ -179,29 +181,34 @@ bug in the simulator cannot hide a bug in the engine.
 
 ## Measured baseline
 
-Seed 42, 20 sessions × 80 words, weighted sampling, cumulative tiers:
+Seed 42, 100 sessions × 80 words, weighted sampling, bucketed tiers:
 
 | variant | mean | sd | solved | wrong/word |
 |---|---:|---:|---:|---:|
-| coverage, corpus priors (default) | 1329.45 | 54.32 | 96.1% | 2.59 |
-| occurrences, corpus priors | 1328.00 | 52.64 | 96.1% | 2.61 |
-| coverage, uniform priors | 1154.10 | 80.82 | 90.5% | 3.67 |
-| occurrences, uniform priors | 1152.40 | 78.80 | 90.6% | 3.71 |
+| coverage, corpus priors (default) | 1404.65 | 34.75 | 97.5% | 1.94 |
+| occurrences, corpus priors | 1401.07 | 38.41 | 97.4% | 1.96 |
+| coverage, uniform priors | 1286.04 | 51.70 | 94.1% | 2.75 |
+| occurrences, uniform priors | 1281.28 | 50.88 | 94.1% | 2.80 |
 
 Three findings drive the remaining roadmap:
 
-1. **Priors are worth ~175 points**, more than anything else measured so far.
-2. **The first tier costs most of the loss** (4.49 misses per word with priors, 6.33 without,
-   versus 0.20 in the last tier). Any further work should target short words with large
-   candidate sets.
-3. **The prior's strength is not worth tuning.** 100 sessions per point: 0 → 1150.60,
-   0.25 → 1311.02, 0.5 → 1322.29, 0.75 → 1317.17, 1.0 → 1308.60. Everything from 0.25 to 1.0
+1. **Priors are worth ~119 points**, more than anything else measured so far.
+2. **The first tier costs most of the loss** (4.63 misses per word with priors, 6.48 without,
+   versus 0.20 in the last tier; the four tiers average 1.94, so this one tier is 60% of every
+   miss in the game). Any further work should target short words with large candidate sets.
+3. **The prior's strength is not worth tuning.** 100 sessions per point: 0 → 1286.04,
+   0.25 → 1396.72, 0.5 → 1404.65, 0.75 → 1401.62, 1.0 → 1395.29. Everything from 0.25 to 1.0
    sits inside three standard errors of the plateau; only "use it at all" matters.
 
-Pool size, 100 sessions per cell, coverage, corpus / uniform: 1,000 → 1461.84 / 1023.59,
-5,000 → 1446.80 / 1110.95, 20,000 → 1412.60 / 1138.60, 100,000 → 1322.29 / 1150.60. The two
-priors move in opposite directions, which is the evidence that the pool defines difficulty
-rather than tuning the solver: scores are comparable only at a fixed `--pool`.
+Pool size, 100 sessions per cell, coverage, corpus / uniform: 1,000 → 1511.47 / 1279.23,
+5,000 → 1498.22 / 1297.46, 20,000 → 1468.32 / 1286.65, 100,000 → 1404.65 / 1286.04. The corpus
+column slopes 107 points while the uniform column moves 18 with no trend, which is a sharper
+statement than M1 could make: the pool is difficulty only for a solver that reads the corpus.
+A solver with no ranking signal picks letters the same way whatever is eligible.
+
+Under cumulative tiers the uniform column *did* slope (1023.59 → 1150.60). The bucket reading
+removes the path that produced it — a short answer landing in a tier whose candidate set spans
+the whole short end of the dictionary — and with it the effect.
 
 ### The control group
 
@@ -233,10 +240,11 @@ Two consequences, one of which retracts an earlier claim:
   different games. Withdrawn. What is real is the weaker claim that the legacy replay's own
   distribution contains 1326 at 1.31σ.
 
-The gap is not spread evenly: ~107 of the 144 points are the first tier, which is where the
-prior helps and where M3 is aimed. The legacy client was not especially broken on long words;
-it simply had no way to rank a sixteen-thousand-word candidate set, and only the first tier has
-one.
+The gap is not spread evenly: ~107 of the 144 points are the first tier. Under buckets the
+candidate set is already correct — the server only asks words inside the bucket it named, so the
+legacy filtering never loses the answer — and what the client lacks is a way to *order* that
+set. It ranks letters, not words, and at sixteen thousand candidates on the first tier that is
+the difference between 73.5% and 90.0% solved.
 
 ## Milestones
 
@@ -267,7 +275,7 @@ one.
 | separate `truth` and `belief` rankings in the CLI | a prior scan must not move the answer distribution, or the result cannot be attributed | one ranking shared by simulator and solver |
 | commit the gzipped rank list | builds stay offline; 395 KB is cheap | download at build time |
 | replay the legacy algorithm in-module as a control group | a defect priced in points is an argument; the same defect described in prose is an opinion, and it was worth rewriting the harness `Variant` from "a letter selector" to "a solver factory" to allow it | paraphrase the defect list and move on |
-| keep `cumulative` as the CLI default after buckets was proven | the default should follow the published instructions, not the reverse-engineered server, so that the published numbers stay comparable to the document | switch the default and silently invalidate every previously reported number |
+| switch the default to `bucketed` once the control group proved it | the default should describe the game that was played; keeping the literal reading as the headline made every published number describe a world that never existed | keep `cumulative` to avoid re-running the tables — the cost was three minutes of measurement and one honest rewrite |
 
 ## Risks
 
@@ -278,10 +286,12 @@ one.
   stays in every report.
 - A greedy solver leaves value on the table on wide candidate sets. Mitigation: quantified per
   tier, and the target of M3.
-- A score without its `--pool` is meaningless, since the pool defines difficulty. Mitigation:
-  every report header prints it, and the pool sweep is in the README.
-- The default difficulty is not the server's. Mitigation: stated in the README's Limits, and
-  every report header names the reading it used, so the two are never silently mixed.
+- A score without its `--pool` is meaningless for any solver that reads the corpus: the pool
+  moves that solver by 107 points across the sweep, and a solver without a prior by 18.
+  Mitigation: every report header prints it, and the sweep is in the README.
+- The tier reading rests on one historical session plus a replay, not on the server's source.
+  Mitigation: the gap it produces is 5σ, and `--difficulty` keeps both readings runnable so the
+  weaker one can be checked directly.
 - The legacy replay skips letters already guessed, where the original could repeat one. That
   can only raise the legacy score, making every reported gap a lower bound. Mitigation: none
   needed — the direction is known and conservative.

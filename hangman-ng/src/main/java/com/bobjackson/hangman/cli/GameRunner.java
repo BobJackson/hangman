@@ -181,12 +181,15 @@ public final class GameRunner {
                   --seed N           master seed; per-session seeds derive from it (default 42)
                   --pool N           how many of the most frequent words may be served (default 100000)
                   --sampling M       weighted | uniform                          (default weighted)
-                  --difficulty M     cumulative | bucketed                        (default cumulative)
+                  --difficulty M     bucketed | cumulative                       (default bucketed)
+                                     bucketed is what the original server did; cumulative is
+                                     the instructions' literal <= reading
                   --words N          words per session, a multiple of 4            (default 80)
                   --allow N          misses allowed per word                      (default 10)
                   --failure-rate F   probability that any single call fails        (default 0)
-                  --variants LIST    coverage, occurrences, legacy            (default both)
-                                     legacy replays the original client's decisions
+                  --variants LIST    coverage, occurrences, legacy
+                                     (default coverage,occurrences; legacy replays
+                                     the original client's decisions)
                   --dictionary PATH  word list; by default words.txt or ../words.txt is used
                   --priors M         ranked | uniform                            (default ranked)
                   --exponent F       prior strength for ranked priors, 0 = flat  (default 0.5)

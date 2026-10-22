@@ -44,11 +44,20 @@ class SimulationConfigTest {
     }
 
     @Test
+    void defaultsToTheTierReadingTheServerUsed() {
+        // Pinned by the legacy control group: replaying the original client under cumulative
+        // tiers scores 5.25 standard deviations below the 1326 it actually scored, so the
+        // server bucketed by length. The literal reading stays available, not default.
+        assertThat(SimulationConfig.defaults().difficulty())
+                .isEqualTo(SimulationConfig.DifficultySemantics.BUCKETED);
+    }
+
+    @Test
     void labelsTiersWithTheirWordRange() {
-        assertThat(SimulationConfig.defaults().tierLabel(0)).isEqualTo("1-20 (<=5)");
-        assertThat(SimulationConfig.defaults().tierLabel(3)).isEqualTo("61-80 (>12)");
-        assertThat(withDifficulty(SimulationConfig.DifficultySemantics.BUCKETED).tierLabel(1))
-                .isEqualTo("21-40 (6-8)");
+        assertThat(SimulationConfig.defaults().tierLabel(0)).isEqualTo("1-20 (3-5)");
+        assertThat(SimulationConfig.defaults().tierLabel(3)).isEqualTo("61-80 (13+)");
+        assertThat(withDifficulty(SimulationConfig.DifficultySemantics.CUMULATIVE).tierLabel(1))
+                .isEqualTo("21-40 (<=8)");
     }
 
     @Test

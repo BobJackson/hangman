@@ -40,13 +40,15 @@ public record SimulationConfig(int poolSize,
      * <p>The instructions give upper bounds only — "1st to 20th word: length &lt;= 5",
      * "21st to 40th: length &lt;= 8" — which literally means a tier-2 word may still be
      * three letters long. The legacy implementation instead treated them as disjoint
-     * buckets (6-8 for tier 2), which is a different game. Both are modelled so the
-     * difference can be measured rather than assumed away.
+     * buckets (6-8 for tier 2). Both are modelled because only one of them was ever played,
+     * and a replay of the legacy client is what says which: under cumulative tiers it scores
+     * 5.25 standard deviations below the 1326 it actually scored, under buckets it lands on
+     * the mean.
      */
     public enum DifficultySemantics {
-        /** Literal reading: tier bounds accumulate. */
+        /** Literal reading: tier bounds accumulate. Never what the server did. */
         CUMULATIVE,
-        /** Disjoint ranges: 3-5, 6-8, 9-12, 13+. The legacy interpretation. */
+        /** Disjoint ranges: 3-5, 6-8, 9-12, 13+. The default, because the server used it. */
         BUCKETED
     }
 
@@ -74,11 +76,12 @@ public record SimulationConfig(int poolSize,
 
     /**
      * The defaults used for the headline baseline: the documented 80 words and 10 misses,
-     * twenty sessions per measurement, weighted sampling, literal tier semantics, and no
-     * injected faults — failures are a separate robustness run so the score stays clean.
+     * twenty sessions per measurement, weighted sampling, bucketed tiers because that is what
+     * the original server did, and no injected faults — failures are a separate robustness run
+     * so the score stays clean.
      */
     public static SimulationConfig defaults() {
-        return new SimulationConfig(100_000, Sampling.WEIGHTED, DifficultySemantics.CUMULATIVE,
+        return new SimulationConfig(100_000, Sampling.WEIGHTED, DifficultySemantics.BUCKETED,
                 20, 42L, 0.0, 80, 10);
     }
 
