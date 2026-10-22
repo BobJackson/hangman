@@ -9,6 +9,10 @@ Java 21 · Maven · JUnit 5 + AssertJ · no runtime dependencies.
 The Java 8 project in the repository root is untouched. This module is independent: its own
 `pom.xml`, its own packages, its own tests.
 
+If you only read one page, read [docs/findings.md](docs/findings.md): what each change was
+worth, the two negative results, and where the remaining 195 points are. Everything below is the
+evidence behind it.
+
 ---
 
 ## Status
@@ -93,9 +97,8 @@ quarter of the words accounts for 60% of every miss in the game, against an aver
 The last tier is solved every time by both priors.
 
 The first tier is identical under both readings — both cap it at five letters. The bucket reading
-bites on the second tier, where it asks
-for 6-8 letters specifically (33,887 candidates) instead of anything up to eight (50,367). That
-is why this table is milder than the cumulative one.
+bites on the second tier, where it asks for 6-8 letters specifically (33,887 words) instead of
+anything up to eight (50,367). That is why this table is milder than the cumulative one.
 
 ### The control group: what the old code was worth
 
