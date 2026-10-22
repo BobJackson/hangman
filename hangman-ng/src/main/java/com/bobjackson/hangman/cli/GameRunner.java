@@ -11,8 +11,12 @@ import com.bobjackson.hangman.sim.EvaluationHarness;
 import com.bobjackson.hangman.sim.SimulationConfig;
 import com.bobjackson.hangman.solver.AuditSummary;
 import com.bobjackson.hangman.solver.AuditedLetterSelector;
+import com.bobjackson.hangman.solver.EliminationSolver;
 import com.bobjackson.hangman.solver.FrequencyLetterSelector;
 import com.bobjackson.hangman.solver.InformationGainLetterSelector;
+import com.bobjackson.hangman.solver.LetterSelector;
+import com.bobjackson.hangman.solver.MissAnatomy;
+import com.bobjackson.hangman.solver.MissAnatomySummary;
 import com.bobjackson.hangman.solver.SkipPolicy;
 
 import java.io.IOException;
@@ -96,10 +100,11 @@ public final class GameRunner {
 
         List<BenchmarkReport> reports = new ArrayList<>();
         for (String name : options.variants()) {
-            // The audit produces a number, not a score: the selector plays what coverage plays
-            // and only records what the best letter would have been worth.
+            // Both probes produce numbers, not scores: they play exactly what coverage plays and
+            // record what a correct model would have predicted about it.
             AuditSummary audit = name.equals("audited") ? new AuditSummary() : null;
-            EvaluationHarness.Variant variant = variant(name, audit, options.audit());
+            MissAnatomySummary anatomy = name.equals("anatomy") ? new MissAnatomySummary() : null;
+            EvaluationHarness.Variant variant = variant(name, audit, anatomy, options.audit());
             long started = System.nanoTime();
             BenchmarkReport report = harness.runBestOf(variant, options.bestOf());
             long elapsedMillis = (System.nanoTime() - started) / 1_000_000L;
@@ -107,6 +112,9 @@ public final class GameRunner {
             System.out.print(report.toTable());
             if (audit != null) {
                 System.out.print(audit.describe(options.config().games()));
+            }
+            if (anatomy != null) {
+                System.out.print(anatomy.describe());
             }
             System.out.println("elapsed: " + elapsedMillis + " ms");
             System.out.println();
@@ -120,7 +128,8 @@ public final class GameRunner {
         }
     }
 
-    private static EvaluationHarness.Variant variant(String name, AuditSummary audit, AuditLimits limits) {
+    private static EvaluationHarness.Variant variant(String name, AuditSummary audit,
+                                                    MissAnatomySummary anatomy, AuditLimits limits) {
         return switch (name) {
             case "coverage" -> EvaluationHarness.Variant.selectingLetters(name,
                     new FrequencyLetterSelector(FrequencyLetterSelector.Mode.COVERAGE));
@@ -133,6 +142,17 @@ public final class GameRunner {
                             new FrequencyLetterSelector(FrequencyLetterSelector.Mode.COVERAGE),
                             Objects.requireNonNull(audit, "an audited variant needs its summary"),
                             limits.maxCandidates(), limits.maxMissesLeft(), limits.nodeBudget()));
+            case "anatomy" -> {
+                MissAnatomySummary summary = Objects.requireNonNull(anatomy,
+                        "an anatomy variant needs its summary");
+                yield new EvaluationHarness.Variant(name, dictionary -> {
+                    LetterSelector coverage =
+                            new FrequencyLetterSelector(FrequencyLetterSelector.Mode.COVERAGE);
+                    return (firstState, allowed) -> new MissAnatomy(
+                            EliminationSolver.forWord(dictionary, coverage, firstState, allowed),
+                            dictionary, summary, firstState.length());
+                });
+            }
             case "hopeless" -> EvaluationHarness.Variant.selectingLetters(name,
                     new FrequencyLetterSelector(FrequencyLetterSelector.Mode.COVERAGE),
                     SkipPolicy.hopeless());
@@ -143,7 +163,7 @@ public final class GameRunner {
                     dictionary -> LegacySolver.factory(LegacyTiers.of(dictionary)));
             default -> throw new IllegalArgumentException(
                     "unknown variant \"" + name + "\"; expected coverage, occurrences, information, "
-                            + "audited, hopeless, expected-value or legacy");
+                            + "audited, anatomy, hopeless, expected-value or legacy");
         };
     }
 
@@ -231,15 +251,17 @@ public final class GameRunner {
                                      models a server that scores the best submission;
                                      the attempts run concurrently, so N costs about one
                                      session's wall clock
-                  --variants LIST    coverage, occurrences, information, audited, hopeless,
-                                     expected-value, legacy
+                  --variants LIST    coverage, occurrences, information, audited, anatomy,
+                                     hopeless, expected-value, legacy
                                      (default coverage,occurrences; legacy replays
                                      the original client's decisions; information maximises
                                      candidate separation instead of hit rate; audited plays
                                      coverage and prices its choices where the rest of the
-                                     word can be solved out exactly; hopeless and
-                                     expected-value use coverage letters and differ only in
-                                     when they give a word up)
+                                     word can be solved out exactly; anatomy plays coverage and
+                                     records every guess against the P(hit) that motivated it,
+                                     to show where misses come from and whether the model priced
+                                     them correctly; hopeless and expected-value use coverage
+                                     letters and differ only in when they give a word up)
                   --audit-candidates N
                                      largest candidate set the audit will price (default 40)
                   --audit-misses N   most misses in hand the audit will price (default 3)

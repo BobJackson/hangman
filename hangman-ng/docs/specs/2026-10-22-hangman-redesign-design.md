@@ -1,7 +1,7 @@
 # hangman-ng — design
 
 Date: 2026-10-22
-Status: M1-M5 implemented and measured
+Status: M1-M6 implemented and measured
 
 ## Goal
 
@@ -38,11 +38,11 @@ asserted at runtime by `isScoreConsistent()`.
 
 Consequence for strategy: a guess is worth taking while `p(hit) * 20` exceeds the expected
 cost of the misses it may cause. Maximising P(hit) — the greedy rule the legacy implementation
-also used — is therefore the right first-order objective. Three alternatives were built and
-measured rather than argued about, and all three came back small or negative: an information-gain
+also used — is therefore the right first-order objective. Four alternatives were built and
+measured rather than argued about, and all four came back small or negative: an information-gain
 objective by 875 points, abandoning words by everything it had (the best possible version is worth
-ten), and an exact lookahead worth 1.3 to 3.1 points per session on the decisions that can be
-priced.
+ten), an exact lookahead worth 1.3 to 3.1 points per session on the decisions that can be priced,
+and a per-guess probe finding that the misses arrive at exactly the rate the model assigned them.
 
 ## Module design
 
@@ -51,7 +51,8 @@ api        HangmanClient, StartGame, WordState, GameResult, HangmanApiException
 dict       Dictionary, DictionaryLoader, WordWeighting, RankWordWeighting
 solver     Solver, EliminationSolver, LetterSelector, FrequencyLetterSelector,
            InformationGainLetterSelector, SkipPolicy, SkipContext, GuessContext,
-           ExactScore, AuditedLetterSelector, AuditSummary
+           ExactScore, AuditedLetterSelector, AuditSummary,
+           MissAnatomy, MissAnatomySummary
 engine     GameEngine, GameListener
 sim        SimulatedServer, SimulationConfig, EvaluationHarness, BenchmarkReport
 transport  HttpHangmanClient, Json, RetryingHangmanClient, Sleeper
@@ -152,6 +153,30 @@ unchanged. An audited run therefore scores bit for bit what the plain run scores
 `AuditSummary` differs. That is what makes the number readable as a measurement rather than a
 bet, and it is why the audit could be run on the main configuration without contaminating it.
 
+### Pricing every guess
+
+The audit prices 1.6% of decisions. The rest cannot be solved out, so the second probe asks a
+different question: not "was there a better letter?" but "were the misses the chosen letter
+produced the ones the model predicted?".
+
+`MissAnatomy` wraps `EliminationSolver` and forwards every call, so an instrumented run scores
+bit for bit what a plain one scores — 1404.65 against 1404.65, at 11.8 s against 10.8 s over 100
+sessions. `nextGuess()` snapshots the candidate count, the misses left and the delegate's own
+`P(hit)` for the letter about to be played; `observe()` compares
+`wrongGuessCountOfCurrentWord` against the value before the guess, which distinguishes a hit from
+a miss even in the case that defeats inference by candidate-set size — a hit on a letter every
+candidate already contains leaves the set untouched.
+
+The probe needs the candidate array, which the solver already holds, so `EliminationSolver` grew
+one package-private diagnostic accessor rather than a second implementation of the consistency
+rule. Nothing public changed, and `GuessContext` still has no pattern field.
+
+`MissAnatomySummary` accumulates three groupings — by word length, by guess index, by `P(hit)`
+tenth — each reporting the observed miss rate beside `1 - mean(P(hit))`. The third is the one that
+can be wrong: the letters, their `P(hit)` and the simulator's sampling all come from the same
+`RankWordWeighting`, so a calibrated probe must show the observed rate tracking the predicted one
+row by row, and a row that does not names a real defect.
+
 ## Data pipeline
 
 `tools/fetch-data.sh` downloads
@@ -217,10 +242,15 @@ Three ambiguities are knobs rather than assumptions:
   iteration over the states small enough to finish, compared against the letter actually played.
   It needs no seed discipline because it is not a sample; its limits are coverage, not noise, and
   the CLI prints both the number of decisions priced and the number skipped.
+- The per-guess probe adds a third kind of evidence: a calibration check over every decision,
+  not a sample of them. It needs no seed discipline either, but it measures the model against
+  itself and can only detect a model that is internally inconsistent, never one that is
+  consistently wrong about the world — if the weights and the sampling were equally miscalibrated,
+  it would see perfect agreement.
 
 ## Test strategy
 
-152 tests, no network, no real sleeps.
+172 tests, no network, no real sleeps.
 
 | class | focus |
 |---|---|
@@ -233,6 +263,8 @@ Three ambiguities are knobs rather than assumptions:
 | `InformationGainLetterSelectorTest` | the 50/50 peak, symmetry, empty-candidate fallback |
 | `ExactScoreTest` | every letter against an uncached reference, the implicit pattern, budget refusal |
 | `AuditedLetterSelectorTest` | the delegate's letter played unchanged, gaps found, coverage counted |
+| `MissAnatomyTest` | the delegate's letter played unchanged, hits read off the miss counter, one letter priced |
+| `MissAnatomySummaryTest` | bucket boundaries, pooled guess indices, delta sign, sample validation |
 | `SimulatedServerTest` | reveal-all-occurrences, miss accounting, determinism, fault injection |
 | `GameEngineTest` | advertised word count, abandonment, listener contract, error propagation |
 | `EvaluationHarnessTest` | best-of-N keeps the maximum, seeds nest, concurrent runs are identical |
@@ -332,6 +364,10 @@ the difference between 73.5% and 90.0% solved.
   of the priced decisions are not optimal, but the whole audit is worth 1.26 to 3.14 points per
   session, because the gaps are 0.12 points apiece. It prices 1.6% to 3.7% of all choices; the
   middle game is untouched by the number and by this milestone.
+- **M6** — a calibration probe over every guess, the answer to the hole M5 left. Done, with a
+  negative result: 49.2% of the 70,788 guesses are certain hits that cost 0.9% of the misses, and
+  the remaining half misses at 42.7% against a predicted 43%. Row by row the largest deviation
+  outside a 53-decision row is one standard error. There is no mispricing to fix.
 - **C** (inserted between M2 and M3) — the legacy algorithm replayed as a control group. Done:
   it re-reads M1's headline, prices the defect table at 144 points, and settles the tier
   ambiguity in favour of buckets.
@@ -377,6 +413,42 @@ ones with the most scope to be wrong. What it does establish is that the endgame
 twenty-point swing is largest and a word is actually saved or lost — is within 0.6% to 1.6% of
 optimal, against a remaining gap of 195 points per session.
 
+### The per-guess probe
+
+100 games, `coverage`, seed 42, 70,788 guesses and 15,495 misses:
+
+| bucket | guesses | share | misses | share of misses | observed miss rate |
+|---|---:|---:|---:|---:|---:|
+| `P(hit)` 0.9 to 1.0 | 34,816 | 49.2% | 139 | 0.9% | 0.4% |
+| `P(hit)` below 0.9 | 35,972 | 50.8% | 15,356 | 99.1% | 42.7% |
+| all | 70,788 | 100% | 15,495 | 100% | 21.9% |
+
+The model predicted 22.0% overall, and about 43% on the risky half. Three readings:
+
+1. **Half of the guesses cannot cost a miss.** 34,816 of 70,788 land on a letter every surviving
+   candidate contains, and they produce 0.9% of the misses. Everything that goes wrong happens in
+   the other half, and there the observed rate and the predicted one coincide.
+2. **The prediction holds row by row.** Ten rows by `P(hit)`, eighteen by word length, ten by
+   guess index. The largest deviation outside the smallest row is 0.011 on a 7,453-decision row,
+   one standard error; the `0.0-0.1` row is off by 0.071 on 53 decisions whose own standard error
+   is 0.077.
+3. **Calibration plus greed closes the single-step question.** On its own the agreement says only
+   that the model knows its own odds — a solver choosing terrible letters would be equally well
+   calibrated at a worse rate. It becomes decisive because `coverage` maximises that same number
+   at every step, so no other letter could have lowered the expected miss count when it was
+   chosen.
+
+The shape is worth recording because it explains where the score is. The chosen letter hits 28.6%
+of the time on a three-letter answer and 97.6% on a thirteen-letter one: a short word offers three
+positions to use a letter on, a long one offers thirteen. Within a word, the first two guesses
+carry a 31.5% miss rate and the ninth 14.4%; the rise at `10+` is survivorship, since a word still
+running after ten turns is one that was not solved.
+
+What the probe cannot do is price a *sequence* — a worse letter now for better odds later. That
+is the question the audit prices at 1.3 to 3.1 points in the endgame and `information` prices at
+−875 in the extreme. The middle game is still unpriced, but it is no longer unexplained: the
+misses there are the ones the model called.
+
 ## Decisions and rejected alternatives
 
 | decision | rationale | rejected |
@@ -404,6 +476,10 @@ optimal, against a remaining gap of 195 points per session.
 | the audit plays the delegate's letter, always | a measurement that changes the thing measured is an experiment with two variables; this way the audited run's score is identical by construction and the gap is a number rather than a delta with noise | let the audit return the optimal letter and measure the score difference — the difference would be dominated by the ±35-point spread |
 | over-budget decisions are refused, not truncated | a truncated recursion prices the last few turns against a whole-word scale, which systematically prefers large reveals — the 875-point mistake | cap the depth and accept a biased answer |
 | the three audit limits are CLI flags | the README claims the audit covers 1.6% of choices; a reader must be able to widen that and watch the number, or the claim is unauditable | hard-code the limits and report one row |
+| the probe wraps the solver, not the selector | the hit-or-miss answer exists only at the solver layer, and forwarding every call is what makes an instrumented run score identically | infer hits from the candidate set shrinking — a hit on a letter every candidate contains leaves it unchanged |
+| one package-private candidate accessor | the probe lives in `solver` and needs the array the solver already holds; a copy per guess would be the only cost the probe adds | rebuild the candidate set from the evidence, duplicating the consistency rule |
+| `P(hit)` priced for one letter, not twenty-six | the probe runs once per guess over up to 16k candidates; the selector's full pass would be 26× the work for one number | reuse the selector's accumulation and take one cell |
+| deltas are read against their own noise, not pooled | a ten-decision row can swing by 0.3; publishing the row's size and its standard error is what keeps the calibration claim falsifiable | report one total deviation and call it agreement |
 
 ## Risks
 
@@ -414,10 +490,11 @@ optimal, against a remaining gap of 195 points per session.
   stays in every report.
 - A greedy solver leaves value on the table on wide candidate sets. Partly mitigated: the
   information-gain alternative was built and measured (−875), so "greedy is wrong" is no longer
-  an untested intuition, and the endgame is now priced exactly at 1.3 to 3.1 points. What stays
-  untested is the middle game — a thousand candidates, most misses in hand — where the audit's
-  state space does not fit and no number here covers it. That is the honest hole, and it is the
-  one place a lookahead policy could still be hiding.
+  an untested intuition; the endgame is priced exactly at 1.3 to 3.1 points; and the per-guess
+  probe shows every miss arriving at the rate the model assigned it, so the single-step choice is
+  not mispriced. What stays untested is the middle game — a thousand candidates, most misses in
+  hand — where the audit's state space does not fit. A calibrated greedy step rules out a wrong
+  *letter* there; it does not rule out a worse *sequence*.
 - Best-of-N depends on a rule the instructions never state: which of several submissions counts.
   Mitigation: the CLI says so on every best-of run, and the README states which reading each row
   assumes.

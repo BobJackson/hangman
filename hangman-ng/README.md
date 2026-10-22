@@ -21,6 +21,7 @@ The Java 8 project in the repository root is untouched. This module is independe
 | **M3** | a skip policy: give a word up rather than run out of misses | **done** — measured, and switched off |
 | **M4** | real HTTP client, parallel session selection | **done** — the HTTP half cannot be exercised (the endpoint is gone); best-of-N is worth +48 |
 | **M5** | an exact lookahead audit on the states that can be solved out | **done** — 1.3 to 3.1 points per session, on the 1.6% of decisions that can be priced |
+| **M6** | a calibrated probe of every guess: was each miss avoidable? | **done** — no; the misses arrive at exactly the rate the model assigned them |
 
 ## Measured results
 
@@ -91,8 +92,8 @@ nearly free. The first tier is where the remaining score is hiding: 4.63 misses 
 quarter of the words accounts for 60% of every miss in the game, against an average of 1.94.
 The last tier is solved every time by both priors.
 
-The first tier is identical under both readings — `<=5` and `3-5` name the same set, since no
-word is shorter than three letters. The bucket reading bites on the second tier, where it asks
+The first tier is identical under both readings — both cap it at five letters. The bucket reading
+bites on the second tier, where it asks
 for 6-8 letters specifically (33,887 candidates) instead of anything up to eight (50,367). That
 is why this table is milder than the cumulative one.
 
@@ -295,6 +296,68 @@ an endgame that is short by 0.6% to 1.6% is not where the next milestone is. Rep
 `--variants coverage,audited`; the three limits exist so the coverage claim can be checked rather
 than taken.
 
+### Every miss was priced, and the price was right
+
+The audit above covers the 1.6% of decisions small enough to solve out; this section covers all of
+them, and asks the other question. Not "was there a better letter?" but "were the misses
+avoidable?".
+
+`anatomy` wraps the solver and plays exactly what `coverage` plays — 1404.65 against 1404.65 on the
+same seed, at 11.8 s against 10.8 s — and for every guess records the `P(hit)` that motivated it
+next to what the server answered. 100 sessions, 70,788 guesses, 15,495 misses.
+
+| bucket | guesses | share | misses | share of misses | observed |
+|---|---:|---:|---:|---:|---:|
+| `P(hit)` 0.9 to 1.0 | 34,816 | 49.2% | 139 | 0.9% | 0.4% |
+| `P(hit)` below 0.9 | 35,972 | 50.8% | 15,356 | 99.1% | 42.7% |
+| all | 70,788 | 100% | 15,495 | 100% | 21.9% |
+
+**Half of every guess is free, and all of the damage is in the other half.** 34,816 of the 70,788
+guesses land on a letter that every surviving candidate contains: a certain hit, which cannot cost
+a miss and does not need one. Those guesses produce 0.9% of the misses. The other half is where
+the score is lost, and it loses at 42.7% against a model that predicted about 43%.
+
+**The prediction holds row by row.** Ten rows by `P(hit)`, eighteen by word length, ten by guess
+index. The largest deviation outside the smallest row is 0.011 on a 7,453-decision row — one
+standard error. The `0.0-0.1` row is off by 0.071, on 53 decisions whose own standard error is
+0.077.
+
+Two of the splits explain the shape of the score. Selected rows:
+
+| word length | 3 | 4 | 5 | 6 | 8 | 13 |
+|---|---:|---:|---:|---:|---:|---:|
+| observed miss rate | 71.4% | 57.4% | 44.5% | 35.5% | 18.8% | 2.4% |
+
+A three-letter answer gives the solver three positions to work with, and the letter `coverage`
+picks is present in only 28.6% of the surviving words. A thirteen-letter answer gives it thirteen
+positions, and the letter it picks is present in 97.6% of them. That is the whole reason tier one
+is where the points are: not a shortage of candidates, but a shortage of places to put a letter.
+
+| guess within the word | 1 | 2 | 3 | 5 | 9 | 10+ |
+|---|---:|---:|---:|---:|---:|---:|
+| observed miss rate | 31.5% | 31.1% | 26.3% | 20.1% | 14.4% | 18.3% |
+
+The first two guesses of a word are the expensive ones, because nothing has been revealed yet. The
+rise at `10+` is survivorship: a word still being guessed after ten turns is a word that was not
+solved, so only the hard ones remain in that row.
+
+**What the calibration does and does not prove.** On its own, agreement between observed and
+predicted misses says only that the model knows its own odds; a solver choosing terrible letters
+would be just as well calibrated at a worse rate. It becomes decisive because `coverage` maximises
+that same number at every step: a calibrated, greedily maximised `P(hit)` means no other letter
+could have lowered the expected miss count at the moment it was chosen. The only way to beat it is
+to take a worse letter now in exchange for better odds later — the sequence question, which the
+section above prices at 1.3 to 3.1 points in the endgame and `information` prices at minus 875
+points in the extreme.
+
+The 4.63 misses per first-tier word are therefore not four and a half mistakes. They are four and
+a half coin flips, called at the odds the model published and landing at the rate it published.
+There is no mispricing to fix, no weight to retune, and no bug hiding in the candidate set. What
+is left is the middle game, unpriced by the audit and not explained by this probe either — but the
+misses there are the ones the model called, not ones it failed to see.
+
+Reproduce with `--variants coverage,anatomy`. The probe prints three tables and changes nothing.
+
 ### Sensitivity: what the remaining guesses are worth
 
 The control group settled the tier question — that one is no longer a guess. Two properties of
@@ -341,7 +404,7 @@ The bucket reading removes that path, and with it the effect.
 
 ```bash
 cd hangman-ng
-mvn test                                # 152 tests, no network, no sleeps
+mvn test                                # 172 tests, no network, no sleeps
 mvn -q package && java -jar target/hangman-ng.jar
 ```
 
@@ -367,9 +430,10 @@ tier            words  solved    rate  wrong/word  guesses skipped  blind
 ```
 
 Useful flags: `--games`, `--seed`, `--pool`, `--sampling`, `--difficulty`, `--priors`,
-`--exponent`, `--variants` (`coverage`, `occurrences`, `information`, `audited`, `hopeless`,
-`expected-value`, `legacy`), `--best-of`, `--failure-rate`, `--dictionary`, and the three audit
-limits `--audit-candidates`, `--audit-misses`, `--audit-budget`. `--help` lists them all.
+`--exponent`, `--variants` (`coverage`, `occurrences`, `information`, `audited`, `anatomy`,
+`hopeless`, `expected-value`, `legacy`), `--best-of`, `--failure-rate`, `--dictionary`, and the
+three audit limits `--audit-candidates`, `--audit-misses`, `--audit-budget`. `--help` lists them
+all.
 
 ## Why a simulator
 
@@ -408,11 +472,12 @@ so `score = 20 * correctWordCount - totalWrongGuessCount`. This lives in
 whose reported score disagrees with the formula is a server whose rules have changed.
 
 The practical consequence: a guess is worth making whenever `p(hit) * 20` exceeds the expected
-cost of the misses it might cause. That is why the solver maximises coverage. Three alternatives
-to that greedy step were measured instead of argued about, and all three came back small or
+cost of the misses it might cause. That is why the solver maximises coverage. Four alternatives
+to that greedy step were measured instead of argued about, and all four came back small or
 negative: an information-gain objective loses 875 points, giving words up is worth ten with
-perfect foresight, and an exact lookahead over the decisions small enough to solve out is worth
-1.3 to 3.1 points per session.
+perfect foresight, an exact lookahead over the decisions small enough to solve out is worth 1.3 to
+3.1 points per session, and a per-guess audit of all 70,788 choices finds the misses arriving at
+exactly the rate the model assigned them.
 
 ## Architecture
 
@@ -420,7 +485,7 @@ perfect foresight, and an exact lookahead over the decisions small enough to sol
 |---|---|---|
 | `api` | typed records for the five actions; no transport | — |
 | `dict` | immutable dictionary, length buckets, 26-bit masks, rank-weighted priors | `api` |
-| `solver` | constraint elimination, letter selection, skip policy, exact lookahead audit | `api`, `dict` |
+| `solver` | constraint elimination, letter selection, skip policy, exact lookahead audit, per-guess miss probe | `api`, `dict` |
 | `legacy` | the original client's decision logic, replayed as a control group | `api`, `dict`, `solver` |
 | `engine` | the game state machine and observation hooks | `api`, `solver` |
 | `sim` | simulated server, harness, benchmark report | all of the above |
@@ -475,7 +540,7 @@ which is the check that the intersection actually happened.
 
 ## Tests
 
-152 tests, no network, no sleeps, no flakiness:
+172 tests, no network, no sleeps, no flakiness:
 
 | class | what it pins down |
 |---|---|
@@ -488,6 +553,8 @@ which is the check that the intersection actually happened.
 | `InformationGainLetterSelectorTest` | the 50/50 peak, symmetry, empty-candidate fallback |
 | `ExactScoreTest` | every letter against an uncached reference, the implicit pattern, the budget |
 | `AuditedLetterSelectorTest` | the delegate's letter is played unchanged, gaps are found and counted |
+| `MissAnatomyTest` | the delegate's letter is played unchanged, hits read off the miss counter, one letter priced |
+| `MissAnatomySummaryTest` | bucket boundaries, pooled guess indices, delta sign, sample validation |
 | `SimulatedServerTest` | reveal-all-occurrences, miss accounting, determinism, fault injection |
 | `GameEngineTest` | advertised word count, abandonment, listener contract, failure propagation |
 | `EvaluationHarnessTest` | best-of-N keeps the maximum, seeds nest, concurrent runs are identical |
@@ -517,8 +584,12 @@ waiting for it. The HTTP client is tested against `com.sun.net.httpserver.HttpSe
 - The solver is greedy, not optimal. The alternatives were measured rather than argued about: an
   information-gain objective costs 875 points, giving words up is worth ten with perfect foresight
   and less than nothing without it, and an exact lookahead is worth 1.3 to 3.1 points per session on
-  the decisions small enough to solve out. That last number covers 1.6% to 3.7% of all choices; the
-  middle game is not priced here and no estimate of it is offered.
+  the decisions small enough to solve out. That last number covers 1.6% to 3.7% of all choices. The
+  per-guess probe narrows what remains: every miss in a 100-session run arrived at the rate the
+  model itself assigned it, so the greedy step is not mispriced and no letter was chosen on a
+  weight that was wrong. What that probe cannot do is price a *sequence* — a worse letter now for
+  better odds later — and the middle game, where most of those sequences would live, is still
+  unmeasured. No estimate of it is offered.
 - `HttpHangmanClient` has never talked to the real server, because there is no real server. It
   is tested against a local stub of the documented protocol, so what it proves is that the
   documented shape is handled; the prose in the instructions is the only evidence about the

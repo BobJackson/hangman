@@ -152,6 +152,17 @@ public final class EliminationSolver implements Solver {
         return candidates.length;
     }
 
+    /**
+     * The candidate indices still in play. For diagnostics only.
+     *
+     * <p>Returns the solver's own array rather than a copy, because the only caller is the
+     * anatomy probe, which reads it once and drops it. It must not be modified, and it stops
+     * being the current set as soon as {@link #observe} runs.
+     */
+    int[] candidateIndices() {
+        return candidates;
+    }
+
     /** The mask as currently understood, e.g. {@code "*A**Y"}. For diagnostics. */
     public String currentPattern() {
         return new String(pattern);
