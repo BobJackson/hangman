@@ -1,7 +1,7 @@
 # hangman-ng — design
 
 Date: 2026-10-22
-Status: M1-M2 implemented; M3-M4 planned
+Status: M1-M4 implemented and measured
 
 ## Goal
 
@@ -18,8 +18,9 @@ serves as the reference point for every comparison below.
 
 - Java 21 (LTS), Maven, JUnit 5 + AssertJ.
 - A new module, `hangman-ng`; no existing file is modified or deleted.
-- No runtime dependencies in M1: the simulator needs no HTTP stack and no JSON library.
-  Jackson and `java.net.http` arrive with the real transport in M4.
+- No runtime dependencies, including M4. `java.net.http` is in the JDK, and the protocol's JSON
+  is small enough that a 240-line recursive-descent parser beats a 2018-vintage Jackson that is
+  the only thing available offline.
 - External word-frequency data may be downloaded; the artifact is committed as a gzipped
   resource so builds stay offline and reproducible.
 
@@ -37,18 +38,20 @@ asserted at runtime by `isScoreConsistent()`.
 
 Consequence for strategy: a guess is worth taking while `p(hit) * 20` exceeds the expected
 cost of the misses it may cause. Maximising P(hit) — the greedy rule the legacy implementation
-also used — is therefore the right first-order objective, and skipping a word is only
-profitable when the candidate set is wide and the miss budget is nearly spent.
+also used — is therefore the right first-order objective. Two alternatives were built and
+measured rather than argued about, and both lost: an information-gain objective by 875 points,
+and abandoning words by everything it had, since the best possible version of that is worth ten.
 
 ## Module design
 
 ```
 api        HangmanClient, StartGame, WordState, GameResult, HangmanApiException
 dict       Dictionary, DictionaryLoader, WordWeighting, RankWordWeighting
-solver     Solver, EliminationSolver, LetterSelector, FrequencyLetterSelector, GuessContext
+solver     Solver, EliminationSolver, LetterSelector, FrequencyLetterSelector,
+           InformationGainLetterSelector, SkipPolicy, SkipContext, GuessContext
 engine     GameEngine, GameListener
 sim        SimulatedServer, SimulationConfig, EvaluationHarness, BenchmarkReport
-transport  RetryingHangmanClient, Sleeper
+transport  HttpHangmanClient, Json, RetryingHangmanClient, Sleeper
 cli        GameRunner
 ```
 
@@ -98,6 +101,34 @@ the maximum, breaking ties by static English frequency. Two modes:
 
 An empty candidate set (answer not in our dictionary) degrades to pure frequency order rather
 than failing.
+
+`InformationGainLetterSelector` replaces that objective with the expected reduction in
+`log2(candidates)` and is kept as the measured counter-example: 529.50 against 1404.65. The score
+changes by `21p - 1` per turn, which is monotone in `p`, so exploration that costs a miss is never
+worth paying for; the selector's own arithmetic prefers a 50/50 letter (1.0 bit) to a 90% hit
+(0.469 bit) by a factor of two. Entropy is the right objective only when probes are free.
+
+### Abandoning a word
+
+`Solver.shouldAbandon()` is asked once per turn, before the next guess. `GameEngine` is the only
+place that acts on it, and the default answer is never, so the baseline is untouched. `SkipPolicy`
+supplies the two implemented rules: `hopeless` (no dictionary word explains the evidence) and
+`expectedValue` (`20·P(solve) < (1−P)·missesLeft`, with `P` from a negative-binomial tail).
+
+Both are measured and both are off by default. The intuitive third rule — give up when the hidden
+letters cost more misses than remain — is wrong, and expensively so, because a hit does not
+consume a miss: it skipped 2.8% of the long-word tier, all of them certain solves, for −13 points.
+The omniscient upper bound for the whole idea is ten points: only the 201 first-tier words that
+ran out of misses can be improved, and each by at most the misses it had not spent.
+
+### Transport
+
+`HttpHangmanClient` speaks the documented single-endpoint protocol over `java.net.http`, reading
+`numberOfWordsToGuess` and `numberOfGuessAllowedForEachWord` from the response rather than
+assuming 80 and 10. It deliberately does not retry: `RetryingHangmanClient` wraps it, so the
+policy can be tested without a socket. `Json` is package-private and exists because the only
+JSON library available offline here is from 2018; the protocol uses six field types and no
+nesting beyond one object.
 
 ## Data pipeline
 
@@ -152,6 +183,10 @@ Three ambiguities are knobs rather than assumptions:
 - Each session derives its own seed as `seed + i * 1_000_003`, so session *i* is identical
   regardless of how many sessions the run contains — a single bad session is reproducible on
   its own.
+- Best-of-N reuses that layout in the other order: attempt *a* of game *g* uses
+  `seed + (g + a * games) * 1_000_003`, so the first attempt of every game is exactly the session
+  a plain run would have played. Best-of-N therefore dominates best-of-1 game by game, and every
+  individual session stays reproducible by itself.
 - Reported: mean, median, sample standard deviation, min, max, plus solved rate, misses per
   word, guesses per word and dictionary-miss rate, overall and per difficulty tier.
 - Comparison procedure: change one knob, hold the seed, report the delta against the
@@ -159,7 +194,7 @@ Three ambiguities are knobs rather than assumptions:
 
 ## Test strategy
 
-84 tests, no network, no real sleeps.
+130 tests, no network, no real sleeps.
 
 | class | focus |
 |---|---|
@@ -168,16 +203,23 @@ Three ambiguities are knobs rather than assumptions:
 | `RankWordWeightingTest` | rank order, weight decay, `topN` bounds |
 | `SimulationConfigTest` | tier boundaries, both readings, the bucketed default |
 | `EliminationSolverTest` | consistency rule, repeated letters, empty-candidate fallback |
+| `SkipPolicyTest` | empty candidate sets, hit-versus-miss arithmetic, the negative-binomial tail |
+| `InformationGainLetterSelectorTest` | the 50/50 peak, symmetry, empty-candidate fallback |
 | `SimulatedServerTest` | reveal-all-occurrences, miss accounting, determinism, fault injection |
 | `GameEngineTest` | advertised word count, abandonment, listener contract, error propagation |
+| `EvaluationHarnessTest` | best-of-N keeps the maximum, seeds nest, concurrent runs are identical |
 | `RetryingHangmanClientTest` | retry budget, non-retryable errors, backoff curve, interrupts |
-| `BenchmarkReportTest` | median, sample standard deviation, per-tier aggregation |
+| `JsonTest` | scalar types, escapes, malformed and truncated input |
+| `HttpHangmanClientTest` | rule parameters read not assumed, session forwarding, non-200s, timeouts |
+| `BenchmarkReportTest` | median, sample standard deviation, per-tier aggregation, abandoned counts |
 | `LegacyTiersTest` | length grouping, word-number selection, empty buckets |
 | `LegacySolverTest` | first guess, miss-only length filter, stale counts, tie-break order |
 
 `Sleeper` is injected so the backoff curve is asserted exactly without waiting for it.
 `GameEngineTest` uses a hand-written fake, deliberately independent of `SimulatedServer`, so a
-bug in the simulator cannot hide a bug in the engine.
+bug in the simulator cannot hide a bug in the engine. `HttpHangmanClientTest` runs against a
+`com.sun.net.httpserver.HttpServer` on `127.0.0.1`, so the real `java.net.http` stack exercises
+the real parser without leaving the machine.
 
 ## Measured baseline
 
@@ -251,13 +293,37 @@ the difference between 73.5% and 90.0% solved.
 - **M1** — simulator, dictionary, solver, engine, CLI, reports, tests. Done.
 - **M2** — corpus priors as the default, `--exponent` knob, measured. Done: the scan shows the
   decision is binary (use corpus priors or not) and the exponent plateau is flat from 0.25 to 1.0.
-- **M3** — exact expected-miss minimisation over small candidate sets, plus a skip policy
-  driven by `EV(continue) = p * (30 - k) - 10`. Both target the first tier.
-- **M4** — `HttpHangmanClient` over `java.net.http` + Jackson, and running several sessions in
-  parallel to pick the best-final-score one, since a single session has `sd` ≈ 50-80 points.
+- **M3** — a skip policy. Done, with a negative result: `hopeless` and `expectedValue` both fire
+  zero times in 8,000 words, the intuitive "not enough misses left" rule costs 13 points, and the
+  omniscient upper bound for the whole idea is ten. Kept behind `--variants`, off by default. The
+  exact expected-miss minimisation was **not** built: the one alternative objective that was tried
+  (`information`) cost 62% of the score, so the next thing to build is not another objective but a
+  measurement of how much a lookahead on the same objective could pay.
+- **M4** — `HttpHangmanClient` over `java.net.http` with a hand-written JSON codec (no Jackson),
+  and best-of-N session selection. Done: +20.4 / +36.3 / +48.4 / +56.0 points for N = 2 / 4 / 8 /
+  16, against `σ·e_N` predictions of +19.6 / +35.8 / +49.5 / +61.4. The attempts of one game run
+  concurrently, so N = 4 costs 11% more wall clock than N = 1.
 - **C** (inserted between M2 and M3) — the legacy algorithm replayed as a control group. Done:
   it re-reads M1's headline, prices the defect table at 144 points, and settles the tier
   ambiguity in favour of buckets.
+
+### Best of N
+
+100 games per row, `coverage`, seed 42:
+
+| sessions per game | mean | sd | min | max | wall clock |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 1404.65 | 34.75 | 1316 | 1474 | 11.4 s |
+| 2 | 1425.02 | 27.58 | 1324 | 1478 | 11.4 s |
+| 4 | 1440.96 | 19.09 | 1391 | 1482 | 12.6 s |
+| 8 | 1453.04 | 16.13 | 1413 | 1484 | 24.1 s |
+| 16 | 1460.66 | 11.49 | 1430 | 1485 | 49.8 s |
+
+The mechanism is understood, not merely observed: the mean of a maximum of N draws rises by
+`σ · e_N`, where `e_N` is the expected maximum of N standard normals. Four of the five deltas land
+within 1.5 points of that prediction. This is also the largest single gain in the whole exercise,
+which is the uncomfortable finding — bigger than the 144 points the rewrite was worth against the
+original, and far bigger than the ten the best possible skip rule was worth.
 
 ## Decisions and rejected alternatives
 
@@ -276,6 +342,12 @@ the difference between 73.5% and 90.0% solved.
 | commit the gzipped rank list | builds stay offline; 395 KB is cheap | download at build time |
 | replay the legacy algorithm in-module as a control group | a defect priced in points is an argument; the same defect described in prose is an opinion, and it was worth rewriting the harness `Variant` from "a letter selector" to "a solver factory" to allow it | paraphrase the defect list and move on |
 | switch the default to `bucketed` once the control group proved it | the default should describe the game that was played; keeping the literal reading as the headline made every published number describe a world that never existed | keep `cumulative` to avoid re-running the tables — the cost was three minutes of measurement and one honest rewrite |
+| abandon on evidence, not on miss arithmetic | a hit does not consume a miss, so "not enough misses to reveal the letters" is not a losing position; it was implemented, measured at −13 points, and replaced by the empty-candidate test | keep the intuitive rule because it looked free |
+| skip policy off by default | both implementable rules fire zero times in 8,000 words; a default that never changes behaviour but adds a check per turn is a liability | turn it on because it was built |
+| hand-written `Json` instead of Jackson | zero runtime dependencies keeps `mvn -o` working; the protocol has six field types and one level of nesting | add Jackson 2.9, the only version available offline here |
+| `HttpHangmanClient` does not retry | retry policy is testable only when it is separable, and call counts are otherwise invisible | retry inside the client, where every protocol test would need a socket |
+| seed layout `g + a * games` for best-of-N | attempt 0 of every game is the plain run's session, so best-of-N is provably not worse game by game and each session stays reproducible on its own | `g * attempts + a`, which makes every group's first session new and breaks the comparison |
+| concurrent attempts in the harness | they share nothing but immutable state; eight sessions cost one session's wall clock, which is what makes a 1,600-session measurement practical | run them sequentially and pay eight times the wall clock |
 
 ## Risks
 
@@ -284,8 +356,14 @@ the difference between 73.5% and 90.0% solved.
 - 17.5% of the ranked list is absent from `words.txt`, so the effective answer pool is
   narrower than the rank list implies. Mitigation: reported in the CLI header, and `blind`
   stays in every report.
-- A greedy solver leaves value on the table on wide candidate sets. Mitigation: quantified per
-  tier, and the target of M3.
+- A greedy solver leaves value on the table on wide candidate sets. Partly mitigated: the
+  information-gain alternative was built and measured (−875), so "greedy is wrong" is no longer
+  an untested intuition; what remains untested is a lookahead on the *same* objective, whose size
+  nothing here estimates. The skip lever, which was the other half of that worry, is bounded at
+  ten points.
+- Best-of-N depends on a rule the instructions never state: which of several submissions counts.
+  Mitigation: the CLI says so on every best-of run, and the README states which reading each row
+  assumes.
 - A score without its `--pool` is meaningless for any solver that reads the corpus: the pool
   moves that solver by 107 points across the sweep, and a solver without a prior by 18.
   Mitigation: every report header prints it, and the sweep is in the README.

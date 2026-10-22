@@ -18,8 +18,8 @@ The Java 8 project in the repository root is untouched. This module is independe
 | **M1** | offline simulator, constraint solver, CLI, unit tests | **done** |
 | **M2** | frequency-weighted priors, exponent knob | **done** — corpus priors are the default |
 | **C** | the legacy algorithm replayed in-module as a control group | **done** — and it re-reads M1's headline |
-| M3 | exact expected-miss minimisation and a skip policy | not started |
-| M4 | real HTTP client, parallel session selection | not started |
+| **M3** | a skip policy: give a word up rather than run out of misses | **done** — measured, and switched off |
+| **M4** | real HTTP client, parallel session selection | **done** — the HTTP half cannot be exercised (the endpoint is gone); best-of-N is worth +48 |
 
 ## Measured results
 
@@ -146,6 +146,104 @@ bite, which is where the 481 comes from.
 
 Reproduce with `--variants legacy` (or `coverage,legacy` to see both in one run).
 
+### Giving a word up is worth ten points, and only with perfect foresight
+
+A solver may now abandon a word. `Solver.shouldAbandon()` is asked once per turn, before the
+next guess; the engine breaks the word loop and the report grows a `skipped` column. The default
+answer is never, which is why every other table in this README is unchanged, byte for byte.
+
+Three rules were measured. The baseline is the first row; the reverted one was a 20-session
+run, the other two 100:
+
+| rule | how often it fired | mean | result |
+|---|---|---:|---|
+| never (default) | — | 1404.65 | baseline |
+| "not enough misses left to reveal the hidden letters" | 2.8% of the 13+ tier | 1397.25 (20 sessions) | **−13**, reverted |
+| "no dictionary word explains the evidence" (`hopeless`) | never | 1404.65 | identical |
+| "20·P(solve) < (1−P)·misses left" (`expected-value`) | never | 1404.65 | identical, 1.8× slower |
+
+The reverted rule is the interesting one. It reads as free — give up when the remaining reveals
+cost more misses than you have — and it is wrong, in the direction that costs score: **a hit does
+not consume a miss**, and a word allows unlimited guesses. A thirteen-letter answer with eleven
+distinct letters is revealed by eleven hits and zero misses. Pricing hits as misses skipped eleven
+words of four hundred in the long-word tier, every one of them a word that tier solves anyway, and
+that is 13 points gone.
+
+What survives is the one state that cannot be recovered: an empty candidate set, meaning the
+answer is not in `words.txt`. That is real, and it never happens here, because the answer pool
+is intersected with the dictionary (`blind` is 0.0% everywhere). The expected-value rule is
+strictly better founded and also never fires: over 8,000 words the arithmetic never clears a
+20-point prize against a 1-point-per-miss cost.
+
+So what is the whole idea worth? Only words that end with the misses exhausted can be improved,
+and only by the misses they had not yet spent. In the 100-session baseline, 201 of the 2,000
+first-tier words ended with all ten misses gone; no word on any other tier did. A clairvoyant who
+walks away after the k-th guess saves `201 × (10 − k) / 100` points per session:
+
+| walks away after | points per session |
+|---|---:|
+| 0 guesses | 20.10 |
+| 3 | 14.07 |
+| 5 | 10.05 |
+
+Ten points, 0.7%, for a solver that already knows which words it will fail. A solver that does
+not know is the version that was measured twice, and it scored zero. Reproduce with
+`--variants coverage,hopeless,expected-value`.
+
+### Maximising information loses 875 points
+
+`information` replaces the hit-rate objective with expected information gain:
+`p·log2(n/hits) + (1−p)·log2(n/(n−hits))`, the expected reduction in `log2(candidates)`.
+
+| variant | mean | sd | solved | wrong/word |
+|---|---:|---:|---:|---:|
+| `coverage` | **1404.65** | 34.75 | 97.5% | 1.94 |
+| `information` | 529.50 | 107.56 | 67.8% | 6.95 |
+
+It is not close, and it fails in both directions at once — fewer words solved *and* more misses
+per word — which is what a wrong objective looks like rather than an unlucky one.
+
+The arithmetic says the same thing in one line. Per turn the score changes by
+`20p − (1 − p) = 21p − 1`, which is monotone in `p`: the best letter *this turn* is the one most
+likely to hit. Information gain is the right objective only when exploration is free, and here it
+is not — a miss costs a point and a hit costs nothing, so a coin-flip letter is a bad buy however
+much it teaches. The selector's own scores show the trap: `gain(50/100) = 1.0` bit, while
+`gain(90/100) = 0.469`, so it prefers a 50/50 letter over a near-certain hit by a factor of two.
+On the 13+ tier, where candidates differ by a letter or two, it saturates the miss budget on
+probes.
+
+### Best of N: the largest gain available, and it is not in the algorithm
+
+Nothing in the score depends on the solver being unlucky. If more than one session may be played,
+the highest score is the one to keep, and the spread buys more than any strategy change measured
+here. `--best-of N` plays each game N times, keeps the best attempt, and runs the attempts of one
+game concurrently: 100 games per row, `coverage`, same seeds.
+
+| sessions per game | mean | vs baseline | sd | min | max | wall clock |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 1404.65 | — | 34.75 | 1316 | 1474 | 11.4 s |
+| 2 | 1425.02 | +20.37 | 27.58 | 1324 | 1478 | 11.4 s |
+| 4 | 1440.96 | +36.31 | 19.09 | 1391 | 1482 | 12.6 s |
+| 8 | 1453.04 | +48.39 | 16.13 | 1413 | 1484 | 24.1 s |
+| 16 | 1460.66 | +56.01 | 11.49 | 1430 | 1485 | 49.8 s |
+
+This is the maximum of N samples, so the expected gain is `σ·e_N` where `e_N` is the expected
+maximum of N standard normal draws — 0.564, 1.029, 1.424, 1.766 for N = 2, 4, 8, 16. With
+σ = 34.75 that predicts +19.6, +35.8, +49.5 and +61.4 against the measured +20.4, +36.3, +48.4
+and +56.0. Five numbers, four of them within a point and a half, is enough to say the mechanism
+is understood rather than merely observed.
+
+Three things it buys, in order of usefulness: the mean rises, the floor rises faster (1316 →
+1430, which is what matters if a score has to clear a bar), and the spread halves. Two caveats.
+The instructions never say which submission counts — "best" assumes a server that keeps the
+highest score, and if it kept the *last* one the same result needs the best session submitted
+last, which needs the sessions alive at the same time. And a best-of report's per-tier table
+describes the winning session, so it reads optimistic; only the score line is unbiased.
+
++48 points from repeating the same program is worth remembering next to the +144 the rewrite was
+worth, and the ~10 that the best possible skip rule was worth. The cheapest remaining points were
+never in the algorithm.
+
 ### Sensitivity: what the remaining guesses are worth
 
 The control group settled the tier question — that one is no longer a guess. Two properties of
@@ -192,7 +290,7 @@ The bucket reading removes that path, and with it the effect.
 
 ```bash
 cd hangman-ng
-mvn test                                # 84 tests, no network, no sleeps
+mvn test                                # 130 tests, no network, no sleeps
 mvn -q package && java -jar target/hangman-ng.jar
 ```
 
@@ -211,14 +309,16 @@ answer pool: 79971 words from the top 96886 ranked (16915 not in the dictionary,
 === coverage | 20 sessions x 80 words, weighted sampling, bucketed tiers, seed 42 ===
 sessions 20   words 1600   correct 1562 (97.6%)   wrong 3035 (1.90/word)
 score    mean 1410.25   median 1416.00   sd 38.96   min 1320   max 1474
-tier            words  solved    rate  wrong/word  guesses  blind
-1-20 (3-5)        400     362   90.5%        4.49     8.40   0.0%
+tier            words  solved    rate  wrong/word  guesses skipped  blind
+1-20 (3-5)        400     362   90.5%        4.49     8.40    0.0%   0.0%
+21-40 (6-8)       400     400  100.0%        2.22     8.21    0.0%   0.0%
 ...
 ```
 
 Useful flags: `--games`, `--seed`, `--pool`, `--sampling`, `--difficulty`, `--priors`,
-`--exponent`, `--variants` (including `legacy`), `--failure-rate`, `--dictionary`. `--help`
-lists them all.
+`--exponent`, `--variants` (`coverage`, `occurrences`, `information`, `hopeless`,
+`expected-value`, `legacy`), `--best-of`, `--failure-rate`, `--dictionary`. `--help` lists them
+all.
 
 ## Why a simulator
 
@@ -257,8 +357,10 @@ so `score = 20 * correctWordCount - totalWrongGuessCount`. This lives in
 whose reported score disagrees with the formula is a server whose rules have changed.
 
 The practical consequence: a guess is worth making whenever `p(hit) * 20` exceeds the expected
-cost of the misses it might cause. That is why the solver maximises coverage — and why a skip
-policy (M3) can only ever be a marginal improvement over guessing.
+cost of the misses it might cause. That is why the solver maximises coverage. Both of the
+obvious alternatives were built and measured rather than argued about, and both lost by the
+arithmetic: an information-gain objective by 875 points, and giving words up by everything it
+had, since the best possible version of that is worth ten.
 
 ## Architecture
 
@@ -266,11 +368,11 @@ policy (M3) can only ever be a marginal improvement over guessing.
 |---|---|---|
 | `api` | typed records for the five actions; no transport | — |
 | `dict` | immutable dictionary, length buckets, 26-bit masks, rank-weighted priors | `api` |
-| `solver` | constraint elimination + letter selection | `api`, `dict` |
+| `solver` | constraint elimination, letter selection, skip policy | `api`, `dict` |
 | `legacy` | the original client's decision logic, replayed as a control group | `api`, `dict`, `solver` |
 | `engine` | the game state machine and observation hooks | `api`, `solver` |
 | `sim` | simulated server, harness, benchmark report | all of the above |
-| `transport` | retry decorator with bounded exponential backoff | `api` |
+| `transport` | `HttpHangmanClient` over `java.net.http` with a hand-written JSON codec, retry decorator | `api` |
 | `cli` | argument parsing and reporting | `dict`, `legacy`, `sim`, `solver` |
 
 Dependencies point one way. The solver knows nothing about HTTP, scoring or game flow; the
@@ -321,7 +423,7 @@ which is the check that the intersection actually happened.
 
 ## Tests
 
-84 tests, no network, no sleeps, no flakiness:
+130 tests, no network, no sleeps, no flakiness:
 
 | class | what it pins down |
 |---|---|
@@ -330,15 +432,22 @@ which is the check that the intersection actually happened.
 | `RankWordWeightingTest` | rank order, weight decay, `topN`, exponent 0 collapsing to uniform |
 | `SimulationConfigTest` | tier boundaries and both readings of the documented bounds |
 | `EliminationSolverTest` | the consistency rule, repeated letters, dictionary-miss fallback |
+| `SkipPolicyTest` | empty candidate sets, the hit-versus-miss arithmetic, the negative-binomial tail |
+| `InformationGainLetterSelectorTest` | the 50/50 peak, symmetry, empty-candidate fallback |
 | `SimulatedServerTest` | reveal-all-occurrences, miss accounting, determinism, fault injection |
 | `GameEngineTest` | advertised word count, abandonment, listener contract, failure propagation |
+| `EvaluationHarnessTest` | best-of-N keeps the maximum, seeds nest, concurrent runs are identical |
 | `RetryingHangmanClientTest` | retry budget, non-retryable errors, backoff curve, interrupts |
-| `BenchmarkReportTest` | median, sample standard deviation, per-tier aggregation |
+| `JsonTest` | the protocol's scalar types, escapes, malformed and truncated input |
+| `HttpHangmanClientTest` | rule parameters read rather than assumed, session forwarding, non-200s |
+| `BenchmarkReportTest` | median, sample standard deviation, per-tier aggregation, abandoned counts |
 | `LegacyTiersTest` | length grouping, word-number selection, empty buckets |
 | `LegacySolverTest` | first guess, length filter on misses only, stale counts, tie-break order |
 
 Retries are tested with an injected `Sleeper`, so the backoff curve is asserted exactly without
-waiting for it.
+waiting for it. The HTTP client is tested against `com.sun.net.httpserver.HttpServer` on
+`127.0.0.1`, which ships with the JDK: no mocking framework, no network, and the real
+`java.net.http` stack on both ends.
 
 ## Limits
 
@@ -351,8 +460,16 @@ waiting for it.
 - The legacy replay is faithful to the decisions, not to the runtime. It skips letters already
   guessed, where the original could repeat one; that deviation can only raise the legacy score,
   so every gap reported here is a lower bound on the real one.
-- The solver is greedy, not optimal. It maximises the chance of a hit this turn; it does not
-  minimise the expected number of misses over the rest of the word (M3).
-- A word is abandoned only when the misses run out. Deliberately skipping a word whose
-  candidate set is still wide is left to M3, and the baseline suggests the gain is small: at
-  three misses spent, the break-even probability of eventually solving is already below 40%.
+- The solver is greedy, not optimal. What was ruled out: an information-gain objective, which
+  loses 875 points, and giving words up, whose omniscient upper bound is ten. What is still
+  unmeasured is an exact expected-miss minimisation over the belief state — a planner that keeps
+  the hit-rate objective but looks further ahead. Nothing here estimates its size; the one
+  alternative objective that was tried cost 62% of the score, which is why it was not built next.
+- `HttpHangmanClient` has never talked to the real server, because there is no real server. It
+  is tested against a local stub of the documented protocol, so what it proves is that the
+  documented shape is handled; the prose in the instructions is the only evidence about the
+  shape itself.
+- Best-of-N assumes a scoring rule the instructions never state. If the server kept the last
+  submission rather than the best, the same result needs the best session submitted last, which
+  requires holding every session open. The gain itself is not in doubt — it is the maximum of
+  N samples either way.
