@@ -17,6 +17,7 @@ The Java 8 project in the repository root is untouched. This module is independe
 |---|---|---|
 | **M1** | offline simulator, constraint solver, CLI, unit tests | **done** |
 | **M2** | frequency-weighted priors, exponent knob | **done** — corpus priors are the default |
+| **C** | the legacy algorithm replayed in-module as a control group | **done** — and it re-reads M1's headline |
 | M3 | exact expected-miss minimisation and a skip policy | not started |
 | M4 | real HTTP client, parallel session selection | not started |
 
@@ -35,10 +36,18 @@ otherwise. A full session costs about 80 ms, so the whole table takes seconds.
 | `coverage`, uniform priors (`--priors uniform`) | **1154.10** | 1167.50 | 80.82 | 978 | 1301 | 90.5% | 3.67 |
 | `occurrences`, uniform priors | 1152.40 | 1170.00 | 78.80 | 978 | 1261 | 90.6% | 3.71 |
 
-The corpus-prior row lands within one point of the 1326 the legacy implementation reported
-against the real server in 2017 — with 78/80 correct and 234 wrong. That agreement is the
-strongest evidence available that the simulator's answer distribution is not wildly wrong: the
-model reproduces a number it was not tuned to reproduce.
+An earlier draft of this section called the near-match with the 1326 the legacy implementation
+reported in 2017 the strongest available evidence that the simulator's answer distribution was
+right. **The control group below withdraws that claim.** 1326 is a single session, not a mean,
+and the two numbers came from different programs playing different games: `coverage` under
+cumulative tiers versus the legacy client under the disjoint buckets it actually used. It was a
+coincidence that read as a validation.
+
+What survives is weaker but sound: replaying the legacy logic under cumulative tiers scores
+841.13, five standard deviations below 1326, so the server cannot have used that reading. Under
+the bucket reading it scores 1260.24 ± 50.30, and 1326 sits 1.31 standard deviations above that
+mean — an ordinary single-session draw. That is the agreement worth trusting, because it
+compares one program to itself.
 
 The two counting modes are statistically indistinguishable (`sd` ≈ 53, difference ≈ 1.5).
 `COVERAGE` stays the default because it estimates P(hit) directly; the measurement says the
@@ -82,14 +91,64 @@ Short words cost almost everything, and long words cost almost nothing — the l
 the original author's intuition that by the time words get long, a big dictionary makes them
 nearly free. The first tier is where the remaining score is hiding.
 
-### Sensitivity: what the unverifiable assumptions are worth
+### The control group: what the old code was worth
 
-The real server is gone, so three properties of it are guesses. The harness measures them
-rather than asserting them.
+The legacy algorithm is reimplemented in `legacy/` — not as a competitor, but as the control
+group. Same simulator, same seeds, same answer pool, same scoring formula. That turns "the old
+code had defects" from a code-review opinion into a number, and it settles a question the rest
+of this README had been guessing at.
+
+100 sessions per cell, so each mean carries a standard error of 3.5 to 9 points:
+
+| difficulty | variant | mean | sd | solved | wrong/word |
+|---|---|---:|---:|---:|---:|
+| bucketed | `coverage` | **1404.65** | 34.75 | 97.5% | 1.94 |
+| bucketed | `legacy` | 1260.24 | 50.30 | 93.2% | 2.89 |
+| cumulative | `coverage` | **1322.29** | 50.91 | 95.8% | 2.63 |
+| cumulative | `legacy` | 841.13 | 92.42 | 76.3% | 4.74 |
+
+**The server used disjoint buckets.** The legacy client as published scored 1326 once. The
+replay scores 1260.24 under buckets — 1.31 standard deviations above that mean, an ordinary
+draw — and 841.13 under cumulative tiers, 5.25 standard deviations below it. A 5σ gap is not a
+bad session; it is a different game. The instructions' `<=5` wording describes a world the
+original program could never have scored 1326 in, so the disjoint reading is what the server
+did, and the client's tier logic was matching it rather than corrupting it.
+
+**What the defects cost depends entirely on that answer.** In the world the server actually
+played, the rewrite is worth **144 points** (1404.65 − 1260.24, about 24 standard errors — not
+a close call). In the world the instructions literally describe, it is worth **481 points**,
+because the tier mismatch becomes destructive: the `blind` column, 0.0% in every other report
+in this README, jumps to 38.7% and 70.0% on tiers two and three, meaning the selected bucket
+held no word that could explain the evidence at all. Neither number is wrong; they price the
+same defect against two different worlds, and only the first one was ever played.
+
+The 144 points are not evenly spread. Measured against the bucket reading:
+
+| tier | `coverage` solved / wrong | `legacy` solved / wrong | points of the 144 |
+|---|---:|---:|---:|
+| 1-20 (3-5) | 90.0% / 4.63 | 73.5% / 6.71 | ~107 |
+| 21-40 (6-8) | 100.0% / 2.18 | 99.4% / 3.12 | ~21 |
+| 41-60 (9-12) | 100.0% / 0.75 | 100.0% / 1.21 | ~9 |
+| 61-80 (13+) | 100.0% / 0.20 | 100.0% / 0.51 | ~6 |
+
+Three quarters of the gap is the first tier, which is the same place the prior helps and the
+same place M3 is aimed. The rest is easy to explain. Under buckets the candidate set is already
+correct — the server only asks words inside the bucket it named, so the legacy filtering never
+loses the answer, and its several filtering defects have nowhere to bite. What it lacks is a way
+to *order* that set: it can rank letters by how often they occur inside the surviving words, but
+it cannot weight the words themselves. At sixteen thousand candidates on the first tier, that is
+the difference between 73.5% and 90.0% solved. Under cumulative tiers the filtering defects do
+bite, which is where the 481 comes from.
+
+Reproduce with `--variants legacy` (or `coverage,legacy` to see both in one run).
+
+### Sensitivity: what the remaining guesses are worth
+
+The control group settled the tier question — that one is no longer a guess. Two properties of
+the server are still modelled rather than known, and the harness measures them:
 
 | assumption changed | mean score | solved | wrong/word |
 |---|---:|---:|---:|
-| tier bounds read as disjoint buckets, not cumulative | 1410.25 | 97.6% | 1.90 |
 | answers drawn uniformly instead of by frequency | 1240.50 | 93.1% | 3.12 |
 | 5% of every call fails (retry layer enabled) | 1329.45 | 96.1% | 2.59 |
 
@@ -123,7 +182,7 @@ and why scores are only comparable at a fixed `--pool`.
 
 ```bash
 cd hangman-ng
-mvn test                                # 74 tests, no network, no sleeps
+mvn test                                # 83 tests, no network, no sleeps
 mvn -q package && java -jar target/hangman-ng.jar
 ```
 
@@ -147,7 +206,8 @@ tier            words  solved    rate  wrong/word  guesses  blind
 ```
 
 Useful flags: `--games`, `--seed`, `--pool`, `--sampling`, `--difficulty`, `--priors`,
-`--exponent`, `--variants`, `--failure-rate`, `--dictionary`. `--help` lists them all.
+`--exponent`, `--variants` (including `legacy`), `--failure-rate`, `--dictionary`. `--help`
+lists them all.
 
 ## Why a simulator
 
@@ -162,9 +222,13 @@ Three things it models deliberately, because they are where the specification is
 - **Answers are drawn by corpus frequency**, not uniformly. A uniform draw over 100k words
   serves things no product would ask for. `--sampling uniform` measures that pessimistic
   world too.
-- **Tier bounds are read literally** (`<=5`, `<=8`, `<=12`, `>12`), which is the wording the
-  instructions use. The legacy implementation treated them as disjoint buckets, a different
-  game; `--difficulty bucketed` measures the difference, and it is worth 80 points.
+- **Tier bounds are a knob, and the control group settles which reading the server used.** The
+  instructions write `<=5`, `<=8`, `<=12`, `>12`, which reads as cumulative; the legacy client
+  built disjoint buckets instead. Replaying the legacy logic under both readings shows that
+  only the bucket reading can produce the 1326 it actually scored, so the client was following
+  the server, not corrupting it. `--difficulty` defaults to `cumulative` because that is what
+  the document says — but the `bucketed` rows are the ones that describe the game that was
+  played, and every headline number above is the cumulative one.
 - **Faults are injected before any state change**, so a retried call cannot double-count a
   guess. The retry layer is therefore safe by construction, not by luck.
 
@@ -193,10 +257,11 @@ policy (M3) can only ever be a marginal improvement over guessing.
 | `api` | typed records for the five actions; no transport | — |
 | `dict` | immutable dictionary, length buckets, 26-bit masks, rank-weighted priors | `api` |
 | `solver` | constraint elimination + letter selection | `api`, `dict` |
+| `legacy` | the original client's decision logic, replayed as a control group | `api`, `dict`, `solver` |
 | `engine` | the game state machine and observation hooks | `api`, `solver` |
 | `sim` | simulated server, harness, benchmark report | all of the above |
 | `transport` | retry decorator with bounded exponential backoff | `api` |
-| `cli` | argument parsing and reporting | `dict`, `sim`, `solver` |
+| `cli` | argument parsing and reporting | `dict`, `legacy`, `sim`, `solver` |
 
 Dependencies point one way. The solver knows nothing about HTTP, scoring or game flow; the
 engine owns no per-word state, so it can play eighty words or eighty thousand with no reset
@@ -207,7 +272,9 @@ revealed position matches and every masked position holds a letter that has *nev
 guessed*. Because a hit reveals every occurrence, the second clause already subsumes both
 "contains none of the missed letters" and "the revealed letter occurs exactly this many times".
 The legacy implementation tracked those two facts separately, in a `wrongHistory` list and a
-`rightGuess` map, and applied them only to the most recent entry of each.
+`rightGuess` map, and replayed only the newest entry of each — which loses nothing while the
+set is filtered in place, but leaves the state impossible to rebuild, which is why the original
+rebuilt its candidate lists for every word.
 
 ## Defects this rewrite structurally removes
 
@@ -220,6 +287,7 @@ The legacy implementation tracked those two facts separately, in a `wrongHistory
 | `lettersByFrequency.get(0)` threw once all 26 letters were guessed | `IllegalStateException` with a message that names the real cause |
 | reflection into `LinkedHashMap.tail` | no reflection; the code runs on JDK 9 and later, including this one |
 | 80 and 10 baked into the client | read from `startGame` and never hard-coded |
+| tier buckets keyed by word number, but grouped by word length | a tier is a config value that selects words by length, so the two can never disagree |
 
 ## Data
 
@@ -243,7 +311,7 @@ which is the check that the intersection actually happened.
 
 ## Tests
 
-74 tests, no network, no sleeps, no flakiness:
+83 tests, no network, no sleeps, no flakiness:
 
 | class | what it pins down |
 |---|---|
@@ -256,6 +324,8 @@ which is the check that the intersection actually happened.
 | `GameEngineTest` | advertised word count, abandonment, listener contract, failure propagation |
 | `RetryingHangmanClientTest` | retry budget, non-retryable errors, backoff curve, interrupts |
 | `BenchmarkReportTest` | median, sample standard deviation, per-tier aggregation |
+| `LegacyTiersTest` | length grouping, word-number selection, empty buckets |
+| `LegacySolverTest` | first guess, length filter on misses only, stale counts, tie-break order |
 
 Retries are tested with an injected `Sleeper`, so the backoff curve is asserted exactly without
 waiting for it.
@@ -264,6 +334,14 @@ waiting for it.
 
 - The answer distribution is a model, not the server. The sensitivity table above is the honest
   bound on what that is worth.
+- **The default `--difficulty` is not the server's.** The control group shows the original server
+  used disjoint buckets, but the CLI still defaults to the cumulative reading because that is
+  what the instructions say. Every headline number in this README is therefore a slightly
+  harder game than the one actually played, and the two are not interchangeable: the same code
+  scores 1404.65 under buckets and 1322.29 under cumulative. Compare like with like.
+- The legacy replay is faithful to the decisions, not to the runtime. It skips letters already
+  guessed, where the original could repeat one; that deviation can only raise the legacy score,
+  so every gap reported here is a lower bound on the real one.
 - The solver is greedy, not optimal. It maximises the chance of a hit this turn; it does not
   minimise the expected number of misses over the rest of the word (M3).
 - A word is abandoned only when the misses run out. Deliberately skipping a word whose

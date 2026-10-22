@@ -23,8 +23,10 @@ import java.util.Objects;
  * already tried, position {@code i} would no longer be masked. One condition therefore
  * subsumes both "the word contains none of the letters we missed" and "the revealed letter
  * occurs exactly as many times as the mask shows" — the two facts the legacy code tracked
- * separately in a {@code wrongHistory} list and a {@code rightGuess} map, then applied only
- * to the most recent entry of each.
+ * separately in a {@code wrongHistory} list and a {@code rightGuess} map. It replayed only the
+ * newest entry of each, which loses nothing while the candidate set is filtered in place, since
+ * every earlier constraint is already baked in; what it does lose is the ability to rebuild that
+ * set, which is why the original rebuilt its lists from scratch for every word.
  *
  * <p>State is a mask plus a pattern. There is no history list to keep in sync, no static
  * field to reset between words, and nothing shared with any other solver instance.

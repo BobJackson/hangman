@@ -4,6 +4,8 @@ import com.bobjackson.hangman.dict.Dictionary;
 import com.bobjackson.hangman.dict.DictionaryLoader;
 import com.bobjackson.hangman.dict.RankWordWeighting;
 import com.bobjackson.hangman.dict.WordWeighting;
+import com.bobjackson.hangman.legacy.LegacySolver;
+import com.bobjackson.hangman.legacy.LegacyTiers;
 import com.bobjackson.hangman.sim.BenchmarkReport;
 import com.bobjackson.hangman.sim.EvaluationHarness;
 import com.bobjackson.hangman.sim.SimulationConfig;
@@ -104,12 +106,14 @@ public final class GameRunner {
 
     private static EvaluationHarness.Variant variant(String name) {
         return switch (name) {
-            case "coverage" -> new EvaluationHarness.Variant(name,
+            case "coverage" -> EvaluationHarness.Variant.selectingLetters(name,
                     new FrequencyLetterSelector(FrequencyLetterSelector.Mode.COVERAGE));
-            case "occurrences" -> new EvaluationHarness.Variant(name,
+            case "occurrences" -> EvaluationHarness.Variant.selectingLetters(name,
                     new FrequencyLetterSelector(FrequencyLetterSelector.Mode.OCCURRENCES));
+            case "legacy" -> new EvaluationHarness.Variant(name,
+                    dictionary -> LegacySolver.factory(LegacyTiers.of(dictionary)));
             default -> throw new IllegalArgumentException(
-                    "unknown variant \"" + name + "\"; expected coverage or occurrences");
+                    "unknown variant \"" + name + "\"; expected coverage, occurrences or legacy");
         };
     }
 
@@ -181,7 +185,8 @@ public final class GameRunner {
                   --words N          words per session, a multiple of 4            (default 80)
                   --allow N          misses allowed per word                      (default 10)
                   --failure-rate F   probability that any single call fails        (default 0)
-                  --variants LIST    comma-separated: coverage, occurrences        (default both)
+                  --variants LIST    coverage, occurrences, legacy            (default both)
+                                     legacy replays the original client's decisions
                   --dictionary PATH  word list; by default words.txt or ../words.txt is used
                   --priors M         ranked | uniform                            (default ranked)
                   --exponent F       prior strength for ranked priors, 0 = flat  (default 0.5)

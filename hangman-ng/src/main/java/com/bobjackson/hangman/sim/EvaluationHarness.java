@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Runs a solver variant against {@link SimulatedServer} and collects a {@link BenchmarkReport}.
@@ -48,27 +49,36 @@ public final class EvaluationHarness {
     private static final long GAME_SEED_STRIDE = 1_000_003L;
 
     /**
-     * A named letter-selection strategy.
+     * A named strategy, as a binding from a dictionary to a solver factory.
      *
-     * <p>Only the selector varies. The elimination logic, the engine and the transport are
-     * identical across variants, so a score difference is attributable to the heuristic
-     * alone — which is the entire reason the design separates "which words are possible"
-     * from "which letter is worth asking".
+     * <p>Most variants differ only in {@link LetterSelector}, and {@link #selectingLetters}
+     * spells that out. The binding is a function rather than a selector so that a strategy
+     * with a different <em>structure</em> — the legacy reimplementation in {@code legacy} — can
+     * run through the same engine, transport and report. Everything except the solver is
+     * identical, so a score difference is attributable to the strategy alone, which is the
+     * entire reason the design separates "which words are possible" from "which letter is
+     * worth asking".
      */
-    public record Variant(String name, LetterSelector selector) {
+    public record Variant(String name, Function<Dictionary, SolverFactory> binder) {
 
         public Variant {
             Objects.requireNonNull(name, "name");
-            Objects.requireNonNull(selector, "selector");
+            Objects.requireNonNull(binder, "binder");
             if (name.isBlank()) {
                 throw new IllegalArgumentException("variant name must not be blank");
             }
         }
 
+        /** A variant that varies only which letter it asks for next. */
+        public static Variant selectingLetters(String name, LetterSelector selector) {
+            Objects.requireNonNull(selector, "selector");
+            return new Variant(name, dictionary -> (firstState, wrongGuessesAllowed) ->
+                    EliminationSolver.forWord(dictionary, selector, firstState, wrongGuessesAllowed));
+        }
+
         /** Binds this strategy to a dictionary, producing fresh solvers per word. */
         public SolverFactory toFactory(Dictionary dictionary) {
-            return (firstState, wrongGuessesAllowed) ->
-                    EliminationSolver.forWord(dictionary, selector, firstState, wrongGuessesAllowed);
+            return binder.apply(dictionary);
         }
     }
 

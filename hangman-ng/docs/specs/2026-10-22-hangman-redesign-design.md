@@ -140,7 +140,7 @@ Three ambiguities are knobs rather than assumptions:
 
 | ambiguity | readings | why it matters |
 |---|---|---|
-| tier bounds | `CUMULATIVE` (`<=5`, `<=8`, `<=12`, `>12`) vs `BUCKETED` (3-5, 6-8, 9-12, 13+) | worth ~80 points on the measured baseline |
+| tier bounds | `CUMULATIVE` (`<=5`, `<=8`, `<=12`, `>12`) vs `BUCKETED` (3-5, 6-8, 9-12, 13+) | settled by the control group: the server used buckets |
 | answer distribution | `WEIGHTED` vs `UNIFORM` | worth ~90 points |
 | pool size | top-N of the ranked list | worth ~120 points between N=1k and N=100k |
 
@@ -157,7 +157,7 @@ Three ambiguities are knobs rather than assumptions:
 
 ## Test strategy
 
-71 tests, no network, no real sleeps.
+83 tests, no network, no real sleeps.
 
 | class | focus |
 |---|---|
@@ -170,6 +170,8 @@ Three ambiguities are knobs rather than assumptions:
 | `GameEngineTest` | advertised word count, abandonment, listener contract, error propagation |
 | `RetryingHangmanClientTest` | retry budget, non-retryable errors, backoff curve, interrupts |
 | `BenchmarkReportTest` | median, sample standard deviation, per-tier aggregation |
+| `LegacyTiersTest` | length grouping, word-number selection, empty buckets |
+| `LegacySolverTest` | first guess, miss-only length filter, stale counts, tie-break order |
 
 `Sleeper` is injected so the backoff curve is asserted exactly without waiting for it.
 `GameEngineTest` uses a hand-written fake, deliberately independent of `SimulatedServer`, so a
@@ -188,8 +190,7 @@ Seed 42, 20 sessions × 80 words, weighted sampling, cumulative tiers:
 
 Three findings drive the remaining roadmap:
 
-1. **Priors are worth ~175 points**, more than anything else measured so far. The legacy
-   implementation's 1326 is reproduced at 1329 by this change alone.
+1. **Priors are worth ~175 points**, more than anything else measured so far.
 2. **The first tier costs most of the loss** (4.49 misses per word with priors, 6.33 without,
    versus 0.20 in the last tier). Any further work should target short words with large
    candidate sets.
@@ -202,6 +203,41 @@ Pool size, 100 sessions per cell, coverage, corpus / uniform: 1,000 → 1461.84 
 priors move in opposite directions, which is the evidence that the pool defines difficulty
 rather than tuning the solver: scores are comparable only at a fixed `--pool`.
 
+### The control group
+
+`legacy/LegacySolver` replays the original decision logic behind the same `Solver` interface, so
+the harness can score it. It exists for two reasons: to price the defects listed earlier, and to
+settle the tier ambiguity that M1 had been treating as a coin flip.
+
+100 sessions per cell, seed 42, weighted sampling:
+
+| difficulty | coverage | legacy |
+|---|---:|---:|
+| bucketed | 1404.65 (sd 34.75) | 1260.24 (sd 50.30) |
+| cumulative | 1322.29 (sd 50.91) | 841.13 (sd 92.42) |
+
+The published client scored 1326 in one real session. Under buckets that sits 1.31 standard
+deviations above the replay's mean — an ordinary draw. Under cumulative it sits 5.25 standard
+deviations above. A 5σ gap is not a bad session, so the server used disjoint buckets: the
+client's tier logic was following the server, and the `<=5` wording describes a game that was
+never played.
+
+Two consequences, one of which retracts an earlier claim:
+
+- The rewrite is worth **144 points** in the world that existed (1404.65 − 1260.24) and **481**
+  in the world the document describes. The first is the honest headline. The second measures
+  how destructive the mismatch becomes when the answer's length falls outside the bucket the
+  word number selected: the `blind` rate leaves 0.0% for 38.7% and 70.0% on tiers two and three.
+- The M1 statement that 1329 "reproduced" 1326 was a coincidence, not a validation. It compared
+  `coverage` under cumulative tiers against `legacy` under buckets — two programs in two
+  different games. Withdrawn. What is real is the weaker claim that the legacy replay's own
+  distribution contains 1326 at 1.31σ.
+
+The gap is not spread evenly: ~107 of the 144 points are the first tier, which is where the
+prior helps and where M3 is aimed. The legacy client was not especially broken on long words;
+it simply had no way to rank a sixteen-thousand-word candidate set, and only the first tier has
+one.
+
 ## Milestones
 
 - **M1** — simulator, dictionary, solver, engine, CLI, reports, tests. Done.
@@ -211,6 +247,9 @@ rather than tuning the solver: scores are comparable only at a fixed `--pool`.
   driven by `EV(continue) = p * (30 - k) - 10`. Both target the first tier.
 - **M4** — `HttpHangmanClient` over `java.net.http` + Jackson, and running several sessions in
   parallel to pick the best-final-score one, since a single session has `sd` ≈ 50-80 points.
+- **C** (inserted between M2 and M3) — the legacy algorithm replayed as a control group. Done:
+  it re-reads M1's headline, prices the defect table at 144 points, and settles the tier
+  ambiguity in favour of buckets.
 
 ## Decisions and rejected alternatives
 
@@ -222,11 +261,13 @@ rather than tuning the solver: scores are comparable only at a fixed `--pool`.
 | typed methods per action | each action returns exactly one shape; a sealed response hierarchy would add a layer nothing needs | generic `Response` with a `type` discriminator |
 | `Sleeper` interface | the backoff curve is asserted exactly, and simulation does not wait | real sleeps behind a static call |
 | `RetryingHangmanClient` in M1 | otherwise the simulator's fault injection is dead code with no test | defer retries to M4 |
-| tiers as a config knob | the wording admits two readings and the difference is 80 points | silently pick the legacy reading |
+| tiers as a config knob | the wording admits two readings, and the control group later showed which one the server used | silently pick the legacy reading |
 | answer pool ∩ dictionary | isolates solver quality from corpus coverage | draw answers from the raw rank list |
 | `--exponent 0` flattens the floor weight too | the knob must have a verifiable left endpoint; it now reproduces `--priors uniform` byte-for-byte | leave unlisted words at floor 1, making 0 a third belief nobody asked for |
 | separate `truth` and `belief` rankings in the CLI | a prior scan must not move the answer distribution, or the result cannot be attributed | one ranking shared by simulator and solver |
 | commit the gzipped rank list | builds stay offline; 395 KB is cheap | download at build time |
+| replay the legacy algorithm in-module as a control group | a defect priced in points is an argument; the same defect described in prose is an opinion, and it was worth rewriting the harness `Variant` from "a letter selector" to "a solver factory" to allow it | paraphrase the defect list and move on |
+| keep `cumulative` as the CLI default after buckets was proven | the default should follow the published instructions, not the reverse-engineered server, so that the published numbers stay comparable to the document | switch the default and silently invalidate every previously reported number |
 
 ## Risks
 
@@ -239,3 +280,8 @@ rather than tuning the solver: scores are comparable only at a fixed `--pool`.
   tier, and the target of M3.
 - A score without its `--pool` is meaningless, since the pool defines difficulty. Mitigation:
   every report header prints it, and the pool sweep is in the README.
+- The default difficulty is not the server's. Mitigation: stated in the README's Limits, and
+  every report header names the reading it used, so the two are never silently mixed.
+- The legacy replay skips letters already guessed, where the original could repeat one. That
+  can only raise the legacy score, making every reported gap a lower bound. Mitigation: none
+  needed — the direction is known and conservative.
