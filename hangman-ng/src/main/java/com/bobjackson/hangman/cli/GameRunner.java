@@ -1,13 +1,16 @@
 package com.bobjackson.hangman.cli;
 
+import com.bobjackson.hangman.api.GameResult;
 import com.bobjackson.hangman.dict.Dictionary;
 import com.bobjackson.hangman.dict.DictionaryLoader;
 import com.bobjackson.hangman.dict.RankWordWeighting;
 import com.bobjackson.hangman.dict.WordWeighting;
+import com.bobjackson.hangman.engine.GameEngine;
 import com.bobjackson.hangman.legacy.LegacySolver;
 import com.bobjackson.hangman.legacy.LegacyTiers;
 import com.bobjackson.hangman.sim.BenchmarkReport;
 import com.bobjackson.hangman.sim.EvaluationHarness;
+import com.bobjackson.hangman.sim.SimulatedServer;
 import com.bobjackson.hangman.sim.SimulationConfig;
 import com.bobjackson.hangman.solver.AuditSummary;
 import com.bobjackson.hangman.solver.AuditedLetterSelector;
@@ -18,11 +21,16 @@ import com.bobjackson.hangman.solver.LetterSelector;
 import com.bobjackson.hangman.solver.MissAnatomy;
 import com.bobjackson.hangman.solver.MissAnatomySummary;
 import com.bobjackson.hangman.solver.SkipPolicy;
+import com.bobjackson.hangman.solver.SolverFactory;
+import com.bobjackson.hangman.transport.HttpHangmanClient;
+import com.bobjackson.hangman.transport.MockHangmanServer;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -61,7 +69,13 @@ public final class GameRunner {
             return;
         }
         try {
-            run(options);
+            if (options.serve()) {
+                serve(options);
+            } else if (options.endpoint() != null) {
+                runLive(options);
+            } else {
+                run(options);
+            }
         } catch (IOException | RuntimeException e) {
             // Include the exception type here: an unexpected failure is diagnosable, a bare
             // message containing only "null" is not.
@@ -125,6 +139,101 @@ public final class GameRunner {
             for (BenchmarkReport report : reports) {
                 System.out.println("  " + report.toSummaryLine());
             }
+        }
+    }
+
+    /**
+     * Serves the protocol on a local socket so a client can be pointed at it.
+     *
+     * <p>The rules come from the same {@link SimulationConfig} the offline harness uses, so what
+     * this serves is exactly what an evaluation plays — only the transport differs. The process
+     * blocks until it is killed.
+     */
+    private static void serve(Options options) throws IOException {
+        RankWordWeighting ranking = RankWordWeighting.fromClasspath();
+        SimulationConfig config = options.config();
+        try (MockHangmanServer server = new MockHangmanServer("127.0.0.1", options.port(),
+                () -> new SimulatedServer(config, ranking))) {
+            server.start();
+            System.out.println("hangman-ng | mock server");
+            System.out.println("endpoint:   " + server.endpoint());
+            System.out.println("rules:      " + config.wordsPerGame() + " words, "
+                    + config.wrongGuessesAllowed() + " misses per word");
+            System.out.println("tiers:      " + config.tierLabel(0) + " ... "
+                    + config.tierLabel(SimulationConfig.TIERS - 1));
+            System.out.println("pool:       top " + config.poolSize() + " words, "
+                    + config.sampling().name().toLowerCase(Locale.ROOT) + " sampling");
+            System.out.println("seed:       " + config.seed()
+                    + " (every session replays the same answers)");
+            System.out.println();
+            System.out.println("play a game against it from another terminal:");
+            System.out.println("  java -jar target/hangman-ng.jar --endpoint " + server.endpoint()
+                    + " --games 1");
+            System.out.println();
+            System.out.println("press Ctrl-C to stop");
+            awaitTermination();
+        }
+    }
+
+    /**
+     * Plays real sessions against an HTTP endpoint instead of the simulator.
+     *
+     * <p>This is the only path where {@link HttpHangmanClient} is not talking to a stub, which
+     * is the point of it: the client's reading of the wire format and the server's writing of
+     * it have to agree before a session can finish. Nothing here trusts {@code --words} or
+     * {@code --allow}; both rule parameters are read from the server's {@code startGame} reply,
+     * so a disagreement shows up as a game that ends after a different number of words.
+     */
+    private static void runLive(Options options) throws IOException {
+        URI endpoint = URI.create(options.endpoint());
+        RankWordWeighting truth = RankWordWeighting.fromClasspath();
+        RankWordWeighting belief = options.exponent() == RankWordWeighting.DEFAULT_EXPONENT
+                ? truth
+                : RankWordWeighting.fromClasspath(options.exponent());
+        WordWeighting priors = options.priors() == Priors.UNIFORM ? WordWeighting.uniform() : belief;
+        LoadedDictionary loaded = loadDictionary(options, truth, priors);
+        SolverFactory solver = (firstState, allowed) -> EliminationSolver.forWord(
+                loaded.dictionary(),
+                new FrequencyLetterSelector(FrequencyLetterSelector.Mode.COVERAGE),
+                firstState, allowed);
+
+        System.out.println("hangman-ng | live session");
+        System.out.println("endpoint:   " + endpoint);
+        System.out.println("games:      " + options.config().games()
+                + " (use --games 1 for a quick check)");
+        System.out.println("dictionary: " + loaded.description());
+        System.out.println("priors:     " + describePriors(options, belief));
+        System.out.println();
+
+        List<GameResult> results = new ArrayList<>();
+        for (int game = 1; game <= options.config().games(); game++) {
+            long started = System.nanoTime();
+            GameResult result;
+            try (HttpHangmanClient client = new HttpHangmanClient(endpoint,
+                    Duration.ofSeconds(5), Duration.ofSeconds(30))) {
+                result = new GameEngine(client, solver).play("hangman-ng");
+            }
+            long elapsedMillis = (System.nanoTime() - started) / 1_000_000L;
+            results.add(result);
+            System.out.printf(Locale.ROOT,
+                    "game %d: %d points, %d/%d words, %.2f wrong per word, %d ms%s%n",
+                    game, result.score(), result.correctWordCount(), result.totalWordCount(),
+                    result.wrongGuessesPerWord(), elapsedMillis,
+                    result.isScoreConsistent() ? "" : "  <- score does not match 20*correct - wrong");
+        }
+
+        if (results.size() > 1) {
+            double mean = results.stream().mapToInt(GameResult::score).average().orElse(0);
+            System.out.printf(Locale.ROOT, "%nmean: %.2f over %d games%n", mean, results.size());
+        }
+    }
+
+    /** Blocks until the process is killed; {@code --serve} has nothing to return to. */
+    private static void awaitTermination() {
+        try {
+            Thread.sleep(Long.MAX_VALUE);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -230,12 +339,13 @@ public final class GameRunner {
     /** Parsed command line; validation happens in the {@link SimulationConfig} constructor. */
     private record Options(SimulationConfig config, List<String> variants, String dictionaryPath,
                            Priors priors, double exponent, int bestOf, AuditLimits audit,
-                           boolean help) {
+                           boolean serve, int port, String endpoint, boolean help) {
 
         static final String USAGE = """
                 usage: hangman [options]
 
-                Runs the solver against the offline simulator and prints one report per variant.
+                Evaluates the solver against the offline simulator and prints one report per
+                variant. --serve and --endpoint exercise the HTTP protocol over a socket instead.
 
                   --games N          sessions per variant                        (default 20)
                   --seed N           master seed; per-session seeds derive from it (default 42)
@@ -273,6 +383,14 @@ public final class GameRunner {
                   --exponent F       prior strength for ranked priors, 0 = flat  (default 0.5)
                                      moves the solver's belief only; the simulator's answer
                                      distribution stays fixed, so a scan changes one variable
+                  --serve            serve this protocol on 127.0.0.1 instead of evaluating;
+                                     answers come from the simulator, so --words, --allow,
+                                     --seed, --pool, --sampling and --difficulty decide what
+                                     it serves
+                  --port N           port for --serve                              (default 8080)
+                  --endpoint URL     play --games real sessions against that URL instead of
+                                     the simulator; both rule parameters are read from the
+                                     server, so --words and --allow have no effect
                   --help             print this message
                 """;
 
@@ -292,6 +410,9 @@ public final class GameRunner {
             double exponent = RankWordWeighting.DEFAULT_EXPONENT;
             int bestOf = 1;
             AuditLimits audit = AuditLimits.DEFAULTS;
+            boolean serve = false;
+            int port = -1;
+            String endpoint = null;
             boolean help = false;
 
             for (int i = 0; i < args.length; i++) {
@@ -316,6 +437,9 @@ public final class GameRunner {
                             audit.maxCandidates(), Integer.parseInt(next(args, ++i, arg)), audit.nodeBudget());
                     case "--audit-budget" -> audit = new AuditLimits(
                             audit.maxCandidates(), audit.maxMissesLeft(), Integer.parseInt(next(args, ++i, arg)));
+                    case "--serve" -> serve = true;
+                    case "--port" -> port = Integer.parseInt(next(args, ++i, arg));
+                    case "--endpoint" -> endpoint = next(args, ++i, arg);
                     case "--help", "-h" -> help = true;
                     default -> throw new IllegalArgumentException("unknown option: " + arg);
                 }
@@ -335,10 +459,26 @@ public final class GameRunner {
                 throw new IllegalArgumentException("--audit-candidates, --audit-misses and "
                         + "--audit-budget must all be at least 1, got " + audit);
             }
+            // The two modes disagree about who owns the rules, so accepting both would produce a
+            // run that silently ignored one of them.
+            if (serve && endpoint != null) {
+                throw new IllegalArgumentException(
+                        "--serve and --endpoint are different modes: one listens, the other dials; pick one");
+            }
+            if (!serve && port != -1) {
+                throw new IllegalArgumentException("--port only applies to --serve");
+            }
+            if (port < -1) {
+                throw new IllegalArgumentException("--port must not be negative: " + port);
+            }
+            if (serve && port == -1) {
+                port = 8080;
+            }
 
             SimulationConfig config = new SimulationConfig(poolSize, sampling, difficulty, games,
                     seed, failureRate, wordsPerGame, wrongGuessesAllowed);
-            return new Options(config, variants, dictionaryPath, priors, exponent, bestOf, audit, help);
+            return new Options(config, variants, dictionaryPath, priors, exponent, bestOf, audit,
+                    serve, port, endpoint, help);
         }
 
         private static String next(String[] args, int index, String option) {

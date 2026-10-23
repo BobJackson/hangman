@@ -25,7 +25,7 @@ evidence behind it.
 | **M2** | frequency-weighted priors, exponent knob | **done** — corpus priors are the default |
 | **C** | the legacy algorithm replayed in-module as a control group | **done** — and it re-reads M1's headline |
 | **M3** | a skip policy: give a word up rather than run out of misses | **done** — measured, and switched off |
-| **M4** | real HTTP client, parallel session selection | **done** — the HTTP half cannot be exercised (the endpoint is gone); best-of-N is worth +48 |
+| **M4** | real HTTP client, parallel session selection | **done** — the original endpoint is gone, so both halves of the protocol are now served locally and dialled over a socket; best-of-N is worth +48 |
 | **M5** | an exact lookahead audit on the states that can be solved out | **done** — 1.3 to 3.1 points per session, on the 1.6% of decisions that can be priced |
 | **M6** | a calibrated probe of every guess: was each miss avoidable? | **done** — no; the misses arrive at exactly the rate the model assigned them |
 
@@ -409,7 +409,7 @@ The bucket reading removes that path, and with it the effect.
 
 ```bash
 cd hangman-ng
-mvn test                                # 172 tests, no network, no sleeps
+mvn test                                # 180 tests, no network, no sleeps
 mvn -q package && java -jar target/hangman-ng.jar
 ```
 
@@ -439,6 +439,24 @@ Useful flags: `--games`, `--seed`, `--pool`, `--sampling`, `--difficulty`, `--pr
 `hopeless`, `expected-value`, `legacy`), `--best-of`, `--failure-rate`, `--dictionary`, and the
 three audit limits `--audit-candidates`, `--audit-misses`, `--audit-budget`. `--help` lists them
 all.
+
+### Over a socket
+
+`--serve` turns the process into the other end of the documented protocol, so the HTTP path can
+be exercised without the 2014 server:
+
+```bash
+java -jar target/hangman-ng.jar --serve --port 8080                    # terminal 1
+java -jar target/hangman-ng.jar --endpoint http://127.0.0.1:8080/game/on --games 1   # terminal 2
+```
+
+`MockHangmanServer` forwards every action to a per-session `SimulatedServer`, so the rules served
+over the wire are the rules the harness measures — there is no second implementation to drift.
+The seed stays fixed, so each session replays the same answers. Sessions are named by the server
+rather than by the simulator, because a fixed seed hands every caller the same session id and
+two clients would overwrite each other. `--endpoint` reads both rule parameters from the
+`startGame` reply and ignores `--words` / `--allow`, so a disagreement about the wire format
+shows up as a game that ends after a different number of words.
 
 ## Why a simulator
 
@@ -494,7 +512,7 @@ exactly the rate the model assigned them.
 | `legacy` | the original client's decision logic, replayed as a control group | `api`, `dict`, `solver` |
 | `engine` | the game state machine and observation hooks | `api`, `solver` |
 | `sim` | simulated server, harness, benchmark report | all of the above |
-| `transport` | `HttpHangmanClient` over `java.net.http` with a hand-written JSON codec, retry decorator | `api` |
+| `transport` | `HttpHangmanClient` over `java.net.http` with a hand-written JSON codec, retry decorator, and `MockHangmanServer` serving the same protocol | `api` |
 | `cli` | argument parsing and reporting | `dict`, `legacy`, `sim`, `solver` |
 
 Dependencies point one way. The solver knows nothing about HTTP, scoring or game flow; the
@@ -545,7 +563,7 @@ which is the check that the intersection actually happened.
 
 ## Tests
 
-172 tests, no network, no sleeps, no flakiness:
+180 tests, no network, no sleeps, no flakiness:
 
 | class | what it pins down |
 |---|---|
@@ -566,6 +584,7 @@ which is the check that the intersection actually happened.
 | `RetryingHangmanClientTest` | retry budget, non-retryable errors, backoff curve, interrupts |
 | `JsonTest` | the protocol's scalar types, escapes, malformed and truncated input |
 | `HttpHangmanClientTest` | rule parameters read rather than assumed, session forwarding, non-200s |
+| `MockHangmanServerTest` | a full session through both real halves at once, session lifecycle, 400/405 paths |
 | `BenchmarkReportTest` | median, sample standard deviation, per-tier aggregation, abandoned counts |
 | `LegacyTiersTest` | length grouping, word-number selection, empty buckets |
 | `LegacySolverTest` | first guess, length filter on misses only, stale counts, tie-break order |
@@ -574,6 +593,11 @@ Retries are tested with an injected `Sleeper`, so the backoff curve is asserted 
 waiting for it. The HTTP client is tested against `com.sun.net.httpserver.HttpServer` on
 `127.0.0.1`, which ships with the JDK: no mocking framework, no network, and the real
 `java.net.http` stack on both ends.
+
+`MockHangmanServerTest` is the one place where both halves are real at the same time: the
+client's requests are parsed by the server's own reader and the server's replies by the
+client's own parser. A stub agrees with whatever the client expects, so it cannot catch the two
+of them disagreeing about a field name; this test can.
 
 ## Limits
 
@@ -595,10 +619,10 @@ waiting for it. The HTTP client is tested against `com.sun.net.httpserver.HttpSe
   weight that was wrong. What that probe cannot do is price a *sequence* — a worse letter now for
   better odds later — and the middle game, where most of those sequences would live, is still
   unmeasured. No estimate of it is offered.
-- `HttpHangmanClient` has never talked to the real server, because there is no real server. It
-  is tested against a local stub of the documented protocol, so what it proves is that the
-  documented shape is handled; the prose in the instructions is the only evidence about the
-  shape itself.
+- `HttpHangmanClient` has never talked to the real server, because there is no real server. Both
+  halves of the documented protocol are now implemented in this module and tested against each
+  other over a socket, which proves they agree with each other — not that they agree with the
+  2014 original. The prose in the instructions is still the only evidence about the shape itself.
 - Best-of-N assumes a scoring rule the instructions never state. If the server kept the last
   submission rather than the best, the same result needs the best session submitted last, which
   requires holding every session open. The gain itself is not in doubt — it is the maximum of

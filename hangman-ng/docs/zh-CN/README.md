@@ -23,7 +23,7 @@ Java 21 · Maven · JUnit 5 + AssertJ · 无运行时依赖。
 | **M2** | 词频加权先验、指数旋钮 | **完成** —— 语料先验已是默认 |
 | **C** | 把旧算法在模块内重放，作为对照组 | **完成** —— 并且改写了 M1 的结论 |
 | **M3** | 放弃策略：宁可丢掉一个词，也不要把失手次数耗光 | **完成** —— 已测量，已关闭 |
-| **M4** | 真实 HTTP 客户端、并行选择对局 | **完成** —— HTTP 那一半无法实跑（端点已下线）；best-of-N 值 +48 分 |
+| **M4** | 真实 HTTP 客户端、并行选择对局 | **完成** —— 原端点已下线，所以协议的两半现在都在本地服务并真的经过 socket 对话；best-of-N 值 +48 分 |
 | **M5** | 对能精确求解的局面做前瞻审计 | **完成** —— 每局 1.3 到 3.1 分，覆盖可定价决策的 1.6% |
 | **M6** | 逐次猜测的校准探针：每次失手是否本可避免？ | **完成** —— 否；失手发生的比率与模型给出的赔率完全一致 |
 
@@ -352,7 +352,7 @@ best-of 报告里的分档表描述的是赢的那一局，所以读起来偏乐
 
 ```bash
 cd hangman-ng
-mvn test                                # 172 个测试，不联网，不 sleep
+mvn test                                # 180 个测试，不联网，不 sleep
 mvn -q package && java -jar target/hangman-ng.jar
 ```
 
@@ -381,6 +381,22 @@ tier            words  solved    rate  wrong/word  guesses skipped  blind
 `--exponent`、`--variants`（`coverage`、`occurrences`、`information`、`audited`、`anatomy`、
 `hopeless`、`expected-value`、`legacy`）、`--best-of`、`--failure-rate`、`--dictionary`，
 以及三个审计上限 `--audit-candidates`、`--audit-misses`、`--audit-budget`。`--help` 会全部列出。
+
+### 走 socket
+
+`--serve` 把这个进程变成文档所描述协议的另一端，于是 HTTP 这条路径不必依赖 2014 年那台服务器
+也能实跑：
+
+```bash
+java -jar target/hangman-ng.jar --serve --port 8080                    # 终端 1
+java -jar target/hangman-ng.jar --endpoint http://127.0.0.1:8080/game/on --games 1   # 终端 2
+```
+
+`MockHangmanServer` 把每个动作转发给一个按会话新建的 `SimulatedServer`，所以线上送出的规则就是
+harness 测量的那套规则 —— 没有第二份实现可以走偏。种子保持固定，因此每次会话重放相同的答案。会话
+编号由服务端发放而不是模拟器，因为固定种子会让每个调用方拿到同一个 session id，两个客户端就会互相
+覆盖。`--endpoint` 从 `startGame` 的回复里读两个规则参数，忽略 `--words` / `--allow`，所以线上格式
+一旦不一致，就会表现为一局在错误的词数上结束。
 
 ## 为什么要模拟器
 
@@ -426,7 +442,7 @@ tier            words  solved    rate  wrong/word  guesses skipped  blind
 | `legacy` | 原客户端的决策逻辑，作为对照组重放 | `api`、`dict`、`solver` |
 | `engine` | 游戏状态机与观测钩子 | `api`、`solver` |
 | `sim` | 模拟服务器、harness、评测报告 | 以上全部 |
-| `transport` | 基于 `java.net.http` 的 `HttpHangmanClient`，手写 JSON 编解码，重试装饰器 | `api` |
+| `transport` | 基于 `java.net.http` 的 `HttpHangmanClient`，手写 JSON 编解码，重试装饰器，以及服务同一套协议的 `MockHangmanServer` | `api` |
 | `cli` | 参数解析与报告输出 | `dict`、`legacy`、`sim`、`solver` |
 
 依赖单向。求解器完全不知道 HTTP、计分或游戏流程；引擎不持有任何按词的状态，所以它能玩八十个词，
@@ -470,7 +486,7 @@ tier            words  solved    rate  wrong/word  guesses skipped  blind
 
 ## 测试
 
-172 个测试，不联网、不 sleep、不 flaky：
+180 个测试，不联网、不 sleep、不 flaky：
 
 | 类 | 钉住什么 |
 |---|---|
@@ -491,6 +507,7 @@ tier            words  solved    rate  wrong/word  guesses skipped  blind
 | `RetryingHangmanClientTest` | 重试预算、不可重试错误、退避曲线、中断 |
 | `JsonTest` | 协议的标量类型、转义、畸形与截断输入 |
 | `HttpHangmanClientTest` | 规则参数被读取而非假设、会话转发、非 200 响应 |
+| `MockHangmanServerTest` | 一局完整对局同时经过真实的两端、会话生命周期、400/405 路径 |
 | `BenchmarkReportTest` | 中位数、样本标准差、分档聚合、放弃计数 |
 | `LegacyTiersTest` | 长度分组、按词序号选择、空桶 |
 | `LegacySolverTest` | 第一次猜测、只在失手时过滤长度、陈旧计数、平手顺序 |
@@ -498,6 +515,10 @@ tier            words  solved    rate  wrong/word  guesses skipped  blind
 重试用注入的 `Sleeper` 测试，所以退避曲线可以被精确断言而不用真的等。HTTP 客户端对着 JDK 自带的
 `com.sun.net.httpserver.HttpServer` 在 `127.0.0.1` 上测试：没有 mock 框架，不联网，两端都是真实
 的 `java.net.http` 栈。
+
+`MockHangmanServerTest` 是唯一一处两端同时为真的地方：客户端的请求由服务端自己的读取器解析，
+服务端的回复由客户端自己的解析器解析。stub 永远同意客户端的假设，所以它抓不到两端对某个字段名
+的分歧；这个测试能。
 
 ## 局限
 
@@ -513,8 +534,9 @@ tier            words  solved    rate  wrong/word  guesses skipped  blind
   都按模型自己分配的赔率到达，所以贪心那一步没有错价，也没有任何字母是在错误的权重上被选中的。
   探针做不到的是给**序列**定价 —— 现在选差一点的字母换以后更好的赔率 —— 而那些序列主要存在的
   中局，仍然没有测量。这里不给任何估计。
-- `HttpHangmanClient` 从未和真实服务器说过话，因为没有真实服务器。它对着文档协议的本机 stub 测试，
-  所以它证明的是文档描述的形状被正确处理了；关于形状本身，唯一的证据是说明里的那段文字。
+- `HttpHangmanClient` 从未和真实服务器说过话，因为没有真实服务器。文档协议的两半现在都在本模块里
+  实现了，并且互相之间经过了 socket 的测试，这证明的是它们彼此一致 —— 不是它们与 2014 年那个原版
+  一致。关于协议形状本身，唯一的证据仍然是说明里的那段文字。
 - Best-of-N 假设了一条说明里从未写出的计分规则。如果服务器保留的是最后一次提交而不是最好的，
   同样的结果需要把最好的一局放在最后提交，而这需要让每一局都保持打开。收益本身不受质疑 —— 无论
   如何它是 N 个样本的最大值。
