@@ -1,5 +1,6 @@
 # hangman
 Hangman game which to guess a word .
+[![Watch a one-minute video tour of hangman](https://gitdiagram.com/video-badge.svg)](https://gitdiagram.com/bobjackson/hangman/video)
 
 ### 一、游戏背景
 Hangman在西方是一个家喻户晓的猜词游戏。Hang的英文意思是“绞死”，而Man的英文意思是“人”。由于竞猜者在规定的猜词次数内没有猜中单词就认为被“绞死”，Hangman便由此而得名。该游戏可以训练竞猜者的反应能力，又可以测试其词汇量。西方在电视节目中经常利用该游戏进行有奖竞猜。如果没有记错的话，中国也有"七步诗"之说，也就是对应的"规定的次数之内"，不然就绞死了。
