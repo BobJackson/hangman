@@ -1,5 +1,7 @@
 # hangman-ng
 
+English | [中文](docs/zh-CN/README.md)
+
 A solver for the [Strikingly Hangman interview test](https://github.com/joycehan/strikingly-interview-test-instructions/tree/new),
 built as something that can be **measured** instead of something that has to be run against a
 server that no longer exists.
