@@ -1,5 +1,7 @@
 # hangman-ng — design
 
+English | [中文](../zh-CN/specs/2026-10-22-hangman-redesign-design.md)
+
 Date: 2026-10-22
 Status: M1-M6 implemented and measured
 
