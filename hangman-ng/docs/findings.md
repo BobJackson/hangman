@@ -1,5 +1,7 @@
 # What the measurements say
 
+English | [中文](zh-CN/findings.md)
+
 One page. The evidence behind every number here, and how to reproduce it, is in
 [the README](../README.md); the reasoning behind the design is in
 [the spec](specs/2026-10-22-hangman-redesign-design.md).
